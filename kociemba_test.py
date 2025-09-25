@@ -1,0 +1,17 @@
+import kociemba
+
+try:
+    print(f"입력된 문자열: DRLUUBFBRBLURRLRUBLRDDFDLFUFUFFDBRDUBRUFLLFDDBFLUBLRBD")
+    solution = kociemba.solve('DRLUUBFBRBLURRLRUBLRDDFDLFUFUFFDBRDUBRUFLLFDDBFLUBLRBD')
+    print(f"✅ 계산된 해법: {solution}")
+
+except Exception as e:
+    print(f"❌ 오류: {e}")
+
+try:
+    print(f"입력된 문자열: 'FLBUULFFLFDURRDBUBUUDDFFBRDDBLRDRFLLRLRULFUDRRBDBBBUFL', 'BBURUDBFUFFFRRFUUFLULUFUDLRRDBBDBDBLUDDFLLRRBRLLLBRDDF'")
+    solution = kociemba.solve('FLBUULFFLFDURRDBUBUUDDFFBRDDBLRDRFLLRLRULFUDRRBDBBBUFL', 'BBURUDBFUFFFRRFUUFLULUFUDLRRDBBDBDBLUDDFLLRRBRLLLBRDDF')
+    print(f"✅ 계산된 해법: {solution}")
+
+except Exception as e:
+    print(f"❌ 오류: {e}")
