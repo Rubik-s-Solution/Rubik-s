@@ -318,12 +318,12 @@ def main():
     Path(args.outdir).mkdir(parents=True, exist_ok=True)
 
     defaults = {
-        "front": "cube_front.jpg",
-        "back":  "cube_back.jpg",
-        "left":  "cube_left.jpg",
-        "right": "cube_right.jpg",
-        "up":    "cube_top.jpg",
-        "down":  "cube_bottom.jpg",
+        "front": "cube_img\cube_front.jpg",
+        "back":  "cube_img\cube_back.jpg",
+        "left":  "cube_img\cube_left.jpg",
+        "right": "cube_img\cube_right.jpg",
+        "up":    "cube_img\cube_top.jpg",
+        "down":  "cube_img\cube_bottom.jpg",
     }
     for k, v in defaults.items():
         if getattr(args, k) is None and os.path.exists(v):
