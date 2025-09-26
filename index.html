@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>Rubik's – 3D Viewer (Three.js)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    html,body{margin:0;height:100%;background:#1f1f1f;color:#eaeaea;font:14px/1.3 system-ui,Segoe UI,Roboto,sans-serif}
+    #app{position:fixed;inset:0}
+    .ui{position:fixed;left:16px;top:16px;z-index:10;display:flex;gap:8px;align-items:center;flex-wrap:wrap;
+        background:rgba(0,0,0,.45);border:1px solid rgba(255,255,255,.12);
+        padding:10px 12px;border-radius:10px;backdrop-filter:blur(6px)}
+    .ui button,.ui label{background:#2a2a2a;border:1px solid #3a3a3a;color:#eaeaea;border-radius:8px;padding:8px 10px;cursor:pointer}
+    .ui input[type=file]{display:none}
+    .ui .note{opacity:.8;font-size:12px}
+    .facebar{display:flex;gap:6px}
+  </style>
+  <!-- Import map for Three.js -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.159.0/build/three.module.js"
+    }
+  }
+  </script>
+</head>
+<body>
+  <div class="ui">
+    <div class="facebar">
+      <button data-face="F">F</button>
+      <button data-face="R">R</button>
+      <button data-face="U">U</button>
+      <button data-face="B">B</button>
+      <button data-face="L">L</button>
+      <button data-face="D">D</button>
+    </div>
+    <button id="loadDefault">cube_debug/cube_colors.json 불러오기</button>
+    <label for="filePick">JSON 파일 선택</label><input id="filePick" type="file" accept=".json" />
+    <span class="note">마우스 드래그/휠 · 키: U/R/F/D/L/B · 버튼: 해당 면 보기</span>
+  </div>
+  <div id="app"></div>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "https://unpkg.com/three@0.159.0/examples/jsm/controls/OrbitControls.js";
+
+    // 색 문자 -> hex
+    const COLOR = { w:0xffffff, y:0xffd500, o:0xff6a00, r:0xff0000, g:0x00a000, b:0x1560ff };
+
+    // 기본 세팅
+    const app = document.getElementById("app");
+    const scene = new THREE.Scene(); scene.background = new THREE.Color(0x1f1f1f);
+    const camera = new THREE.PerspectiveCamera(45, innerWidth/innerHeight, 0.1, 100); camera.position.set(5.5,5.5,7.5);
+    const renderer = new THREE.WebGLRenderer({antialias:true}); renderer.setPixelRatio(devicePixelRatio); renderer.setSize(innerWidth,innerHeight); app.appendChild(renderer.domElement);
+    const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.dampingFactor = 0.08; controls.target.set(0,0,0);
+
+    // 라이트
+    scene.add(new THREE.AmbientLight(0xffffff, 0.75));
+    const dir = new THREE.DirectionalLight(0xffffff, 0.75); dir.position.set(5,10,7); scene.add(dir);
+
+    // 큐브 그룹
+    const cube = new THREE.Group(); scene.add(cube);
+
+    // 본체 박스 + 에지
+    cube.add(new THREE.Mesh(new THREE.BoxGeometry(3,3,3), new THREE.MeshPhongMaterial({color:0x111111,shininess:20})));
+    cube.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(3,3,3)), new THREE.LineBasicMaterial({color:0x000000})));
+
+    // 면 좌표계(법선 n, 오른쪽 u, 위 v)
+    const basis = {
+      F:{n:new THREE.Vector3( 0, 0, 1), u:new THREE.Vector3( 1, 0, 0), v:new THREE.Vector3( 0, 1, 0)},
+      B:{n:new THREE.Vector3( 0, 0,-1), u:new THREE.Vector3(-1, 0, 0), v:new THREE.Vector3( 0, 1, 0)},
+      U:{n:new THREE.Vector3( 0, 1, 0), u:new THREE.Vector3( 1, 0, 0), v:new THREE.Vector3( 0, 0,-1)},
+      D:{n:new THREE.Vector3( 0,-1, 0), u:new THREE.Vector3( 1, 0, 0), v:new THREE.Vector3( 0, 0,  1)},
+      R:{n:new THREE.Vector3( 1, 0, 0), u:new THREE.Vector3( 0, 0,-1), v:new THREE.Vector3( 0, 1, 0)},
+      L:{n:new THREE.Vector3(-1, 0, 0), u:new THREE.Vector3( 0, 0, 1), v:new THREE.Vector3( 0, 1, 0)}
+    };
+
+    // 스티커 그룹
+    const facesG = Object.fromEntries(["U","R","F","D","L","B"].map(k=>[k,new THREE.Group()]));
+    Object.values(facesG).forEach(g => cube.add(g));
+
+    // 스티커 그리기
+    const stickerGeo = new THREE.PlaneGeometry(0.88,0.88);
+    function addSticker(face,r,c,ch){
+      const {n,u,v} = basis[face];
+      const cx=(-1+c)*1, cy=(1-r)*1;
+      const pos=new THREE.Vector3().addScaledVector(u,cx).addScaledVector(v,cy).addScaledVector(n,1.5+0.01);
+      const m=new THREE.Matrix4().makeBasis(u.clone().normalize(), v.clone().normalize(), n.clone().normalize());
+      const quat=new THREE.Quaternion().setFromRotationMatrix(m);
+      const mesh=new THREE.Mesh(stickerGeo, new THREE.MeshBasicMaterial({color:COLOR[ch]??0x888888}));
+      mesh.position.copy(pos); mesh.quaternion.copy(quat);
+      facesG[face].add(mesh);
+    }
+    function clearStickers(){ Object.values(facesG).forEach(g=>{ while(g.children.length) g.remove(g.children[0]); }); }
+    function renderState(faces){
+      clearStickers();
+      for(const face of ["U","R","F","D","L","B"])
+        for(let r=0;r<3;r++) for(let c=0;c<3;c++) addSticker(face,r,c,faces[face][r][c]);
+      cube.rotation.set(THREE.MathUtils.degToRad(-20), THREE.MathUtils.degToRad(30), 0);
+    }
+
+    // JSON 로드
+    async function loadDefault(){
+      try{
+        const res = await fetch("./cube_debug/cube_colors.json");
+        if(!res.ok) throw new Error(res.statusText);
+        renderState(await res.json());
+      }catch(e){
+        alert("cube_debug/cube_colors.json을 불러오지 못했습니다.\n서버에서 열거나, JSON 파일 선택을 사용하세요.\n\n"+e);
+      }
+    }
+    function loadFromFile(file){
+      const rd = new FileReader();
+      rd.onload = e => { try{ renderState(JSON.parse(e.target.result)); }catch(err){ alert("JSON 파싱 실패: "+err); } };
+      rd.readAsText(file, "utf-8");
+    }
+
+    // === 보기용 회전(키보드) ===
+    const axisMap = {U:new THREE.Vector3(0,1,0), D:new THREE.Vector3(0,-1,0), F:new THREE.Vector3(0,0,1), B:new THREE.Vector3(0,0,-1), R:new THREE.Vector3(1,0,0), L:new THREE.Vector3(-1,0,0)};
+    let animSpin=null;
+    function rotateFace(face,dir=+1,ms=180){
+      if(animSpin) return; const g=facesG[face]; if(!g) return;
+      const start=performance.now(), axis=axisMap[face].clone().normalize(), target=dir*Math.PI/2;
+      animSpin = (t)=>{ const p=Math.min(1,(t-start)/ms); g.rotation.set(0,0,0); g.setRotationFromAxisAngle(axis,target*p); if(p>=1) animSpin=null; };
+    }
+    window.addEventListener("keydown", e => { const k=e.key.toUpperCase(); if("URFDLB".includes(k)) rotateFace(k); });
+
+    // === 면 보기 버튼: 카메라를 해당 면 정면으로 애니메이션 이동 ===
+    const camRadius = 7.5; // 카메라 거리
+    let animView = null;
+    function viewFace(face, ms=450){
+      const {n, v} = basis[face];
+      const targetPos = n.clone().normalize().multiplyScalar(camRadius); // 정면 위치
+      const targetUp  = v.clone().normalize();                           // 화면의 '위' 정렬
+      const startPos = camera.position.clone();
+      const startUp  = camera.up.clone();
+      const start = performance.now();
+
+      animView = (t)=>{
+        const p = Math.min(1, (t-start)/ms);
+        // 부드러운 이징
+        const e = p<.5 ? 2*p*p : -1+(4-2*p)*p;
+        camera.position.lerpVectors(startPos, targetPos, e);
+        camera.up.lerpVectors(startUp, targetUp, e);
+        controls.target.set(0,0,0);
+        if(p>=1) animView=null;
+      };
+    }   
+
+    // UI 이벤트
+    document.getElementById("loadDefault").addEventListener("click", loadDefault);
+    document.getElementById("filePick").addEventListener("change", e => { if(e.target.files?.[0]) loadFromFile(e.target.files[0]); });
+    document.querySelectorAll('[data-face]').forEach(btn => btn.addEventListener('click', () => viewFace(btn.dataset.face)));
+
+    // 리사이즈 & 루프
+    addEventListener("resize", ()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+    (function loop(){ requestAnimationFrame(loop); if(animSpin) animSpin(performance.now()); if(animView) animView(performance.now()); controls.update(); renderer.render(scene,camera); })();
+  </script>
+</body>
+</html>

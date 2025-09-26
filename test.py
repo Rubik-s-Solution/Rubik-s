@@ -22,46 +22,75 @@ def order_quad(pts):
     out[3] = pts[np.argmax(d)]       # BL
     return out
 
-# ------------------ 면 외곽 검출(스티커 후보 → 볼록껍질 → 4점) ------------------
+# ------------------ 면 외곽 검출(색/화이트 → 실패 시 에지 보조) ------------------
 def detect_face_quad(bgr):
     h, w = bgr.shape[:2]
     scale = 1400 / max(h, w) if max(h, w) > 1400 else 1.0
-    small = cv2.resize(bgr, (int(w*scale), int(h*scale)), interpolation=cv2.INTER_AREA) if scale!=1.0 else bgr.copy()
+    small = cv2.resize(bgr, (int(w*scale), int(h*scale)),
+                       interpolation=cv2.INTER_AREA) if scale!=1.0 else bgr.copy()
 
+    hs, ws = small.shape[:2]
+
+    # 1) 색/화이트 마스크 경로
     hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
     H,S,V = cv2.split(hsv)
-    mask_color = ((S > 70) & (V > 90)).astype(np.uint8)*255
-    mask_white = ((S < 45) & (V > 200)).astype(np.uint8)*255
+    mask_color = ((S > 60) & (V > 80)).astype(np.uint8)*255
+    mask_white = ((S < 55) & (V > 190)).astype(np.uint8)*255
     mask = cv2.bitwise_or(mask_color, mask_white)
-
-    k = cv2.getStructuringElement(cv2.MORPH_RECT,(7,7))
+    k = cv2.getStructuringElement(cv2.MORPH_RECT, (7,7))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k, 1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, 2)
 
     cnts,_ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    hs, ws = small.shape[:2]
     cands=[]
     for c in cnts:
         a = cv2.contourArea(c)
-        if a < 0.0008*hs*ws or a > 0.25*hs*ws: continue
+        if a < 0.0006*hs*ws or a > 0.35*hs*ws: continue
         (cx,cy),(rw,rh),_ = cv2.minAreaRect(c)
-        if min(rw,rh)==0: continue
-        if max(rw,rh)/min(rw,rh) > 1.8: continue
+        if min(rw,rh) == 0: continue
+        if max(rw,rh)/min(rw,rh) > 2.0: continue
         cands.append((a,c))
-    if not cands: return None
 
-    cands = sorted(cands, key=lambda x:x[0], reverse=True)[:12]
-    pts = np.vstack([c.reshape(-1,2) for _,c in cands]).astype(np.float32)
-    hull = cv2.convexHull(pts)
-    peri = cv2.arcLength(hull, True)
-    approx = cv2.approxPolyDP(hull, 0.02*peri, True)
-    if len(approx) != 4:
-        rect = cv2.minAreaRect(hull); box = cv2.boxPoints(rect)
-        approx = box.reshape(-1,1,2).astype(np.float32)
+    if cands:
+        cands = sorted(cands, key=lambda x:x[0], reverse=True)[:12]
+        pts = np.vstack([c.reshape(-1,2) for _,c in cands]).astype(np.float32)
+        hull = cv2.convexHull(pts)
+        peri = cv2.arcLength(hull, True)
+        approx = cv2.approxPolyDP(hull, 0.02*peri, True)
+        if len(approx) != 4:
+            rect = cv2.minAreaRect(hull); box = cv2.boxPoints(rect)
+            approx = box.reshape(-1,1,2).astype(np.float32)
+        quad = (approx.reshape(-1,2) * (1/scale)).astype(np.float32)
+        return order_quad(quad)
 
-    quad = (approx.reshape(-1,2) * (1/scale)).astype(np.float32)
-    return order_quad(quad)
+    # 2) 보조: 에지 기반(프레임 라인)
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 60, 180)
+    edges = cv2.dilate(edges, cv2.getStructuringElement(cv2.MORPH_RECT,(3,3)), 1)
+    cnts,_ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    best = None
+    best_score = -1
+    for c in cnts:
+        a = cv2.contourArea(c)
+        if a < 0.002*hs*ws: continue
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.02*peri, True)
+        if len(approx) != 4: continue
+        rect = approx.reshape(-1,2)
+        x,y,w2,h2 = cv2.boundingRect(rect)
+        ar = w2/h2 if h2>0 else 0
+        if 0.6 < ar < 1.4:  # 거의 정사각
+            score = a
+            if score > best_score:
+                best_score = score
+                best = rect.astype(np.float32)
+
+    if best is not None:
+        quad = (best * (1/scale)).astype(np.float32)
+        return order_quad(quad)
+
+    return None
 
 # ------------------ 적응형 분류(화이트 강화 + 주/노 분리) ------------------
 def classify_face_adaptive(hsv_list):
@@ -69,41 +98,48 @@ def classify_face_adaptive(hsv_list):
     Ss = np.array([s for _,s,_ in hsv_list], dtype=float)
     Vs = np.array([v for _,_,v in hsv_list], dtype=float)
 
-    s_thr = np.percentile(Ss, 30) + 8
-    v_thr = max(np.percentile(Vs, 75) - 8, 165)
+    # 기본 임계
+    s_thr = np.percentile(Ss, 30) + 10       # +8 → +10
+    v_thr = max(np.percentile(Vs, 75) - 5, 165)  # -8 → -5 (화이트 과도 인식 억제)
 
     labels = ["?"] * 9
     white_cand = (Ss < s_thr) & (Vs > v_thr)
 
-    # 화이트 후보 중 주/노 제외
-    for i in range(9):
-        if not white_cand[i]:
-            continue
-        h, s, _ = hsv_list[i]
-        if 10 < h < 40 and s > 45:
-            white_cand[i] = False
+    # ★화이트 예외: 특정 Hue 대역은 '색' 우선
+    for i,(h,s,v) in enumerate(hsv_list):
+        # 파랑/초록 대역은 S가 낮아도 색으로 인정 (하이라이트 대비)
+        if 90 <= h <= 135:   # blue
+            if v > 80: white_cand[i] = False
+        if 37 <= h <= 90:    # green
+            if v > 80: white_cand[i] = False
+        # 빨강/주황/노랑도 S가 꽤 있으면 화이트 아님
+        if (h <= 10 or h >= 170) or (10 < h < 40):
+            if s > 40: white_cand[i] = False
 
     for i in np.where(white_cand)[0]:
         labels[i] = "w"
 
     def hue2label(h, s, v):
-        if 10 < h <= 25 and s > 55 and v > 80:  return "o"
-        if 25 < h <= 37 and s > 55 and v > 90:  return "y"
-        if 37 < h <= 90 and s > 50 and v > 70:  return "g"
-        if 90 < h <= 135 and s > 45 and v > 60: return "b"
-        if (h <= 10 or h >= 170) and s > 50 and v > 70: return "r"
+        # Hue 기반 1차 분류(완만한 경계)
+        if 10 < h <= 25 and s > 45 and v > 70:  return "o"
+        if 25 < h <= 37 and s > 45 and v > 70:  return "y"
+        if 37 < h <= 90 and s > 35 and v > 60:  return "g"
+        if 90 < h <= 135 and s > 30 and v > 60: return "b"
+        if (h <= 10 or h >= 170) and s > 35 and v > 55: return "r"
         return "?"
 
     for i in range(9):
         if labels[i] == "?":
             labels[i] = hue2label(*hsv_list[i])
 
+    # 센터 보정 & 최근접 Hue 보정
     canon = {"r":0, "o":17, "y":31, "g":60, "b":110}
     if labels[4] in canon:
         c = labels[4]
         for i in range(9):
             if labels[i] == "?":
-                labels[i] = c if Ss[i] > s_thr else "w"
+                # 센터색이 있으면 S가 낮아도 센터색으로 당겨줌
+                labels[i] = c if Ss[i] > (s_thr*0.8) else "w"
     else:
         for i in range(9):
             if labels[i] == "?":
@@ -112,14 +148,10 @@ def classify_face_adaptive(hsv_list):
                 labels[i] = best
     return labels
 
-# ------------------ 셀 내부 멀티샘플 HSV (화이트 허용 + 탈락표시 옵션) ------------------
+
+# ------------------ 셀 내부 멀티샘플 HSV ------------------
 def robust_cell_hsv(hsv_img, x1,y1,x2,y2, subgrid=3, subclip=0.6,
                     mark=None, mark_rejected=False):
-    """
-    셀(x1,y1,x2,y2)을 subgrid×subgrid로 나눠 서브패치 중앙 subclip 비율만큼 채취.
-    유효(S>25 & V>50) 또는 화이트(S<35 & V>160) 서브패치의 HSV '중간값'을 반환.
-    mark: 디버그용 이미지. 유효=청록, 탈락=빨강(옵션).
-    """
     H, W = hsv_img.shape[:2]
     x1 = max(0, x1); y1 = max(0, y1); x2 = min(W, x2); y2 = min(H, y2)
     gh = (y2 - y1) / subgrid
@@ -168,15 +200,21 @@ def back_project(pt, Minv):
     p = Minv @ v; p /= (p[2]+1e-9)
     return int(round(p[0])), int(round(p[1]))
 
-# ------------------ 단일 사진에서 3×3 추출(디버그 저장 포함) ------------------
+# ------------------ 단일 사진에서 3×3 추출 ------------------
 def read_face_colors(image_path, size=300, patch_ratio=0.50, save_debug=False, outdir="cube_debug", tag="face",
-                     subgrid=3, subclip=0.6, mark_subsamples=False, mark_rejected=False):
+                     subgrid=3, subclip=0.6, mark_subsamples=False, mark_rejected=False, roi=None):
     bgr = cv2.imread(image_path)
     if bgr is None:
         raise FileNotFoundError(image_path)
-    quad = detect_face_quad(bgr)
-    if quad is None:
-        raise RuntimeError(f"면 외곽 검출 실패: {image_path}")
+
+    # ROI가 있으면 그걸 면으로 사용(작게 찍힌 사진 대응)
+    if roi is not None:
+        x1,y1,x2,y2 = map(int, roi.split(","))
+        quad = np.float32([[x1,y1],[x2,y1],[x2,y2],[x1,y2]])
+    else:
+        quad = detect_face_quad(bgr)
+        if quad is None:
+            raise RuntimeError(f"면 외곽 검출 실패: {image_path}")
 
     dst = np.float32([[0,0],[size-1,0],[size-1,size-1],[0,size-1]])
     M = cv2.getPerspectiveTransform(quad, dst)
@@ -207,6 +245,8 @@ def read_face_colors(image_path, size=300, patch_ratio=0.50, save_debug=False, o
             boxes.append((cx1,cy1,cx2,cy2))
 
     labels = classify_face_adaptive(hsv_list)
+    grid = [[labels[r*3+c] for c in range(3)] for r in range(3)]
+    hsv_grid = [[hsv_list[r*3+c] for c in range(3)] for r in range(3)]
 
     if save_debug:
         for i,(cx1,cy1,cx2,cy2) in enumerate(boxes, start=1):
@@ -215,7 +255,8 @@ def read_face_colors(image_path, size=300, patch_ratio=0.50, save_debug=False, o
             x2, y2 = x1+(size//3), y1+(size//3)
             cv2.rectangle(debug,(x1,y1),(x2,y2),(0,0,0),1)
             cv2.rectangle(debug,(cx1,cy1),(cx2,cy2),(0,255,255),2)
-            cv2.putText(debug, f"{i}:{labels[i-1]}", (x1+4,y1+20), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,255,255), 2)
+            cv2.putText(debug, f"{i}:{labels[i-1]}", (x1+4,y1+20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255,255,255), 2)
         Path(outdir).mkdir(parents=True, exist_ok=True)
         cv2.imwrite(str(Path(outdir)/f"{tag}_warped_debug.png"), debug)
 
@@ -225,11 +266,11 @@ def read_face_colors(image_path, size=300, patch_ratio=0.50, save_debug=False, o
             tl = back_project((cx1,cy1), Minv)
             br = back_project((cx2,cy2), Minv)
             cv2.rectangle(orig, tl, br, (0,255,255), 2)
-            cv2.putText(orig, str(i), (tl[0], tl[1]-6), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,255), 2)
+            cv2.putText(orig, str(i), (tl[0], tl[1]-6),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,255,255), 2)
         cv2.imwrite(str(Path(outdir)/f"{tag}_original_overlay.png"), orig)
 
-    grid = [[labels[r*3+c] for c in range(3)] for r in range(3)]
-    return grid
+    return grid, hsv_grid
 
 # ------------------ 전개도 ------------------
 def draw_unfold_net(faces, cell=86, margin=18, label_on=True, top_label="U", bottom_label="D"):
@@ -259,7 +300,7 @@ def draw_unfold_net(faces, cell=86, margin=18, label_on=True, top_label="U", bot
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,0,0), 2)
     return img
 
-# ------------------ 6면 갤러리(워프드 디버그 6장 합성) ------------------
+# ------------------ 6면 갤러리 ------------------
 def save_debug_gallery(outdir):
     order = ["U","L","F","R","B","D"]
     imgs = []
@@ -302,15 +343,15 @@ def parse_args():
     p.add_argument("--outdir", default="cube_debug")
     p.add_argument("--size", type=int, default=300)
     p.add_argument("--patch", type=float, default=0.50)
-    # 멀티샘플 옵션
-    p.add_argument("--subgrid", type=int, default=3, help="셀 내부 서브패치 격자 크기 (예: 3 → 3x3)")
-    p.add_argument("--subclip", type=float, default=0.6, help="서브패치가 서브셀을 차지하는 비율(0~1)")
+    p.add_argument("--subgrid", type=int, default=3, help="셀 내부 서브패치 격자 크기")
+    p.add_argument("--subclip", type=float, default=0.6, help="서브패치 중앙 비율(0~1)")
     p.add_argument("--mark_subsamples", action="store_true", help="유효 서브패치(청록) 표시")
-    p.add_argument("--mark_rejected", action="store_true", help="탈락 서브패치(빨강)도 표시")
+    p.add_argument("--mark_rejected", action="store_true", help="탈락 서브패치(빨강) 표시")
     p.add_argument("--save_debug", action="store_true")
     p.add_argument("--emit_solver", action="store_true")
     p.add_argument("--label_top", default="U")
     p.add_argument("--label_bottom", default="D")
+    p.add_argument("--roi", help="면 강제 ROI: x1,y1,x2,y2 (원본 좌표, 자동검출 실패 시)")
     return p.parse_args()
 
 def main():
@@ -318,12 +359,12 @@ def main():
     Path(args.outdir).mkdir(parents=True, exist_ok=True)
 
     defaults = {
-        "front": "cube_img\cube_front.jpg",
-        "back":  "cube_img\cube_back.jpg",
-        "left":  "cube_img\cube_left.jpg",
-        "right": "cube_img\cube_right.jpg",
-        "up":    "cube_img\cube_top.jpg",
-        "down":  "cube_img\cube_bottom.jpg",
+        "front": "cube_img\\cube_front.jpg",
+        "back":  "cube_img\\cube_back.jpg",
+        "left":  "cube_img\\cube_left.jpg",
+        "right": "cube_img\\cube_right.jpg",
+        "up":    "cube_img\\cube_top.jpg",
+        "down":  "cube_img\\cube_bottom.jpg",
     }
     for k, v in defaults.items():
         if getattr(args, k) is None and os.path.exists(v):
@@ -332,31 +373,38 @@ def main():
     if missing:
         raise SystemExit(f"필수 이미지가 없습니다: {', '.join(missing)}")
 
-    faces = {}
-    faces["F"] = read_face_colors(args.front, size=args.size, patch_ratio=args.patch,
+    faces, faces_hsv = {}, {}
+
+    faces["F"], faces_hsv["F"] = read_face_colors(args.front, size=args.size, patch_ratio=args.patch,
                                   save_debug=args.save_debug, outdir=args.outdir, tag="F",
                                   subgrid=args.subgrid, subclip=args.subclip,
-                                  mark_subsamples=args.mark_subsamples, mark_rejected=args.mark_rejected)
-    faces["B"] = read_face_colors(args.back,  size=args.size, patch_ratio=args.patch,
+                                  mark_subsamples=args.mark_subsamples, mark_rejected=args.mark_rejected,
+                                  roi=args.roi)
+    faces["B"], faces_hsv["B"] = read_face_colors(args.back,  size=args.size, patch_ratio=args.patch,
                                   save_debug=args.save_debug, outdir=args.outdir, tag="B",
                                   subgrid=args.subgrid, subclip=args.subclip,
-                                  mark_subsamples=args.mark_subsamples, mark_rejected=args.mark_rejected)
-    faces["L"] = read_face_colors(args.left,  size=args.size, patch_ratio=args.patch,
+                                  mark_subsamples=args.mark_subsamples, mark_rejected=args.mark_rejected,
+                                  roi=args.roi)
+    faces["L"], faces_hsv["L"] = read_face_colors(args.left,  size=args.size, patch_ratio=args.patch,
                                   save_debug=args.save_debug, outdir=args.outdir, tag="L",
                                   subgrid=args.subgrid, subclip=args.subclip,
-                                  mark_subsamples=args.mark_subsamples, mark_rejected=args.mark_rejected)
-    faces["R"] = read_face_colors(args.right, size=args.size, patch_ratio=args.patch,
+                                  mark_subsamples=args.mark_subsamples, mark_rejected=args.mark_rejected,
+                                  roi=args.roi)
+    faces["R"], faces_hsv["R"] = read_face_colors(args.right, size=args.size, patch_ratio=args.patch,
                                   save_debug=args.save_debug, outdir=args.outdir, tag="R",
                                   subgrid=args.subgrid, subclip=args.subclip,
-                                  mark_subsamples=args.mark_subsamples, mark_rejected=args.mark_rejected)
-    faces["U"] = read_face_colors(args.up,    size=args.size, patch_ratio=args.patch,
+                                  mark_subsamples=args.mark_subsamples, mark_rejected=args.mark_rejected,
+                                  roi=args.roi)
+    faces["U"], faces_hsv["U"] = read_face_colors(args.up,    size=args.size, patch_ratio=args.patch,
                                   save_debug=args.save_debug, outdir=args.outdir, tag="U",
                                   subgrid=args.subgrid, subclip=args.subclip,
-                                  mark_subsamples=args.mark_subsamples, mark_rejected=args.mark_rejected)
-    faces["D"] = read_face_colors(args.down,  size=args.size, patch_ratio=args.patch,
+                                  mark_subsamples=args.mark_subsamples, mark_rejected=args.mark_rejected,
+                                  roi=args.roi)
+    faces["D"], faces_hsv["D"] = read_face_colors(args.down,  size=args.size, patch_ratio=args.patch,
                                   save_debug=args.save_debug, outdir=args.outdir, tag="D",
                                   subgrid=args.subgrid, subclip=args.subclip,
-                                  mark_subsamples=args.mark_subsamples, mark_rejected=args.mark_rejected)
+                                  mark_subsamples=args.mark_subsamples, mark_rejected=args.mark_rejected,
+                                  roi=args.roi)
 
     net_img = draw_unfold_net(faces, cell=86, margin=18, label_on=True,
                               top_label=args.label_top, bottom_label=args.label_bottom)
@@ -371,6 +419,12 @@ def main():
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(faces, f, ensure_ascii=False, indent=2)
     print("[saved]", json_path)
+
+    # HSV도 함께 저장(센터 기반 분류/보정용)
+    json_hsv_path = str(Path(args.outdir) / "cube_hsv.json")
+    with open(json_hsv_path, "w", encoding="utf-8") as f:
+        json.dump(faces_hsv, f, ensure_ascii=False, indent=2)
+    print("[saved]", json_hsv_path)
 
     if args.emit_solver:
         s = to_solver_string(faces)
