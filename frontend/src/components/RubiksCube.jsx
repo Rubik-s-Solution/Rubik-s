@@ -5,7 +5,24 @@ import CubePiece from './CubePiece'
 
 const ROTATION_DURATION = 500
 
-function RubiksCubeStable() {
+// 색상 머티리얼 캐시
+const materialCache = new Map()
+const getMaterial = (color) => {
+  if (!materialCache.has(color)) {
+    materialCache.set(color, new THREE.MeshPhongMaterial({
+      color: color,
+      transparent: false,
+      side: THREE.FrontSide,
+      depthTest: true,
+      depthWrite: true,
+      shininess: 20,
+      specular: 0x111111
+    }))
+  }
+  return materialCache.get(color)
+}
+
+function RubiksCube() {
   // 26개의 큐브 조각 생성
   const [pieces, setPieces] = useState(() => {
     const COLORS = {
@@ -57,8 +74,16 @@ function RubiksCubeStable() {
     axis: null,
     direction: 1,
     startTime: 0,
-    activeGroup: []
+    activeGroup: [],
+    face: null
   })
+
+  // 회전 그룹 초기화
+  React.useEffect(() => {
+    if (pivotRef.current) {
+      pivotRef.current.rotation.set(0, 0, 0)
+    }
+  }, [])
 
   // 회전할 조각들 선택
   const selectPiecesForRotation = useCallback((face) => {
@@ -91,11 +116,17 @@ function RubiksCubeStable() {
       'F': 'z', 'B': 'z'
     }
     
+    // 피벗 그룹 초기화
+    if (pivotRef.current) {
+      pivotRef.current.rotation.set(0, 0, 0)
+    }
+    
     setRotationState({
       axis: faceMap[face],
       direction,
       startTime: 0,
-      activeGroup: activePieces.map(p => p.id)
+      activeGroup: activePieces.map(p => p.id),
+      face
     })
     
     setIsRotating(true)
@@ -207,15 +238,12 @@ function RubiksCubeStable() {
       const currentRotation = targetRotation * easedProgress
       
       if (progress >= 1) {
-        // 회전 완료
+        // 회전 완료 - 최종 위치 설정
         pivotRef.current.rotation[rotationState.axis] = targetRotation
         
-        // pivot 초기화
-        pivotRef.current.rotation.set(0, 0, 0)
-        
-        // 조각들의 위치와 색상 업데이트
-        setPieces(prevPieces => 
-          prevPieces.map(piece => {
+        // 조각들의 위치와 색상 업데이트 (배치 처리)
+        setPieces(prevPieces => {
+          const updatedPieces = prevPieces.map(piece => {
             if (rotationState.activeGroup.includes(piece.id)) {
               const newPosition = rotatePosition(piece.position, rotationState.axis, rotationState.direction)
               const newFaceColors = rotateFaceColors(piece.faceColors, rotationState.axis, rotationState.direction)
@@ -227,10 +255,18 @@ function RubiksCubeStable() {
             }
             return piece
           })
-        )
+          return updatedPieces
+        })
+        
+        // 다음 프레임에서 피벗 초기화 (상태 업데이트 후)
+        requestAnimationFrame(() => {
+          if (pivotRef.current) {
+            pivotRef.current.rotation.set(0, 0, 0)
+          }
+        })
         
         // 회전 상태 초기화
-        setRotationState({ axis: null, direction: 1, startTime: 0, activeGroup: [] })
+        setRotationState({ axis: null, direction: 1, startTime: 0, activeGroup: [], face: null })
         setIsRotating(false)
         
         // 다음 회전 처리
@@ -239,7 +275,7 @@ function RubiksCubeStable() {
           setRotationQueue(prev => prev.slice(1))
           setTimeout(() => {
             addRotation(nextRotation.face, nextRotation.direction)
-          }, 50)
+          }, 100)
         }
       } else {
         // 회전 진행
@@ -308,17 +344,22 @@ function RubiksCubeStable() {
           position={piece.position}
           faceColors={piece.faceColors}
           onClick={handlePieceClick}
+          isStatic={true}
         />
       ))}
       
-      {/* 회전하는 조각들 */}
-      <group ref={pivotRef}>
+      {/* 회전하는 조각들 - 피벗 그룹 */}
+      <group 
+        ref={pivotRef}
+        name={`pivot-${rotationState.face || 'none'}`}
+      >
         {rotatingPieces.map(piece => (
           <CubePiece
             key={`rotating-${piece.id}`}
             position={piece.position}
             faceColors={piece.faceColors}
             onClick={handlePieceClick}
+            isStatic={false}
           />
         ))}
       </group>
@@ -326,4 +367,4 @@ function RubiksCubeStable() {
   )
 }
 
-export default RubiksCubeStable
+export default RubiksCube

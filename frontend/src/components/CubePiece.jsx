@@ -12,30 +12,36 @@ const COLORS = {
   black: 0x212121
 }
 
-function CubePieceStable({ 
+// 머티리얼 캐시
+const materialCache = new Map()
+const getMaterial = (color) => {
+  const key = `material_${color}`
+  if (!materialCache.has(key)) {
+    materialCache.set(key, new THREE.MeshPhongMaterial({
+      color: color,
+      transparent: false,
+      side: THREE.FrontSide,
+      depthTest: true,
+      depthWrite: true,
+      shininess: 20,
+      specular: 0x111111
+    }))
+  }
+  return materialCache.get(key)
+}
+
+function CubePiece({ 
   position, 
   faceColors, // 각 면의 현재 색상 배열
-  onClick
+  onClick,
+  isStatic = true
 }) {
   const meshRef = useRef()
   const cubeSize = 0.95
 
-  // 전달받은 색상 배열로 머티리얼 생성
+  // 캐시된 머티리얼 사용
   const materials = useMemo(() => {
-    return faceColors.map((color, index) => 
-      new THREE.MeshPhongMaterial({
-        color: color,
-        transparent: false,
-        side: THREE.FrontSide,
-        depthTest: true,
-        depthWrite: true,
-        shininess: 20,
-        specular: 0x111111,
-        polygonOffset: true,
-        polygonOffsetFactor: 1,
-        polygonOffsetUnits: index * 0.1
-      })
-    )
+    return faceColors.map(color => getMaterial(color))
   }, [faceColors])
 
   const handlePointerDown = (event) => {
@@ -59,4 +65,4 @@ function CubePieceStable({
   )
 }
 
-export default CubePieceStable
+export default CubePiece
