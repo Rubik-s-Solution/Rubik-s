@@ -146,6 +146,97 @@ html, body {
   border-radius: 8px;
 }
 
+/* ColorPicker 스타일 */
+.color-picker-container {
+  position: relative;
+}
+
+.color-picker-toggle {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #eee;
+  padding: 10px 15px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s ease;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.color-picker-toggle:hover {
+  background: rgba(255, 118, 0, 0.8);
+  border-color: #ff7600;
+}
+
+.color-picker-toggle.active {
+  background: rgba(255, 118, 0, 0.9);
+  border-color: #ff7600;
+}
+
+.color-picker-panel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 1000;
+  background: rgba(40, 40, 40, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 15px;
+  margin-top: 5px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  min-width: 200px;
+}
+
+.color-picker-title {
+  color: #ccc;
+  font-size: 12px;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.color-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.color-option {
+  width: 40px;
+  height: 40px;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.color-option:hover {
+  transform: scale(1.1);
+  box-shadow: 0 2px 10px rgba(255, 255, 255, 0.3);
+}
+
+.color-option.selected {
+  border-color: #fff !important;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.5);
+}
+
+.color-checkmark {
+  color: #000;
+  font-weight: bold;
+  font-size: 18px;
+  text-shadow: 1px 1px 2px rgba(255, 255, 255, 0.8);
+}
+
+.color-option[style*="background-color: #FFFFFF"] .color-checkmark {
+  color: #333;
+}
+
 /* 반응형 레이아웃 */
 @media (max-width: 1200px) {
   .content-container.view-both {

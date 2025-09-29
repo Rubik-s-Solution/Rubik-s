@@ -24,7 +24,7 @@ const NET_LAYOUT = [
   { face: 'D', x: 1, y: 2 }  // Bottom
 ]
 
-function CubeNet({ pieces, cubeSize = 200 }) {
+function CubeNet({ pieces, cubeSize = 200, colorEditMode = false, selectedCell = null, onCellSelect }) {
   // 각 면의 색상 데이터 생성
   const faceData = useMemo(() => {
     // 각 면별로 3x3 격자 생성
@@ -129,6 +129,11 @@ function CubeNet({ pieces, cubeSize = 200 }) {
                 displayColor = colorMatch ? colorMatch[1] : hexString
               }
               
+              // 선택된 셀인지 확인
+              const isSelected = selectedCell && 
+                selectedCell.face === face && 
+                selectedCell.gridIndex === index
+
               return (
                 <rect
                   key={index}
@@ -137,8 +142,15 @@ function CubeNet({ pieces, cubeSize = 200 }) {
                   width={cellSize}
                   height={cellSize}
                   fill={displayColor}
-                  stroke="#222"
-                  strokeWidth={1}
+                  stroke={isSelected ? "#FFD700" : "#222"}
+                  strokeWidth={isSelected ? 3 : 1}
+                  style={{ 
+                    cursor: colorEditMode ? 'pointer' : 'default',
+                    filter: isSelected ? 'brightness(1.2)' : 'none'
+                  }}
+                  onClick={colorEditMode && onCellSelect ? () => {
+                    onCellSelect(face, row, col)
+                  } : undefined}
                 />
               )
             })}

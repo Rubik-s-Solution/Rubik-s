@@ -6,7 +6,7 @@ const VIEW_MODES = {
   'BOTH': '3D + 전개도'
 }
 
-function ViewModeSelector({ currentMode, onModeChange }) {
+function ViewModeSelector({ viewMode, onViewModeChange }) {
   return (
     <div className="view-mode-selector">
       <span className="view-mode-label">뷰 모드:</span>
@@ -14,8 +14,8 @@ function ViewModeSelector({ currentMode, onModeChange }) {
         {Object.entries(VIEW_MODES).map(([key, label]) => (
           <button
             key={key}
-            className={`view-mode-button ${currentMode === key ? 'active' : ''}`}
-            onClick={() => onModeChange(key)}
+            className={`view-mode-button ${viewMode === key ? 'active' : ''}`}
+            onClick={() => onViewModeChange(key)}
           >
             {label}
           </button>

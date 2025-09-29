@@ -22,7 +22,7 @@ const getMaterial = (color) => {
   return materialCache.get(color)
 }
 
-const RubiksCube = React.forwardRef(({ onDataUpdate }, ref) => {
+const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColor, selectedCell, onFaceColorChange, onCellSelect }, ref) => {
   // 26개의 큐브 조각 생성
   const [pieces, setPieces] = useState(() => {
     const COLORS = {
@@ -315,10 +315,17 @@ const RubiksCube = React.forwardRef(({ onDataUpdate }, ref) => {
   const handlePieceClick = useCallback((event, pieceData) => {
     if (isRotating) return
     
-    const { position } = pieceData
+    const { position, faceIndex } = pieceData
     const [x, y, z] = position
     
-    // 클릭된 조각의 위치를 기준으로 회전할 면 결정
+    // 색상 편집 모드인 경우 - 항상 셀 선택만 함 (색상 적용은 ColorPicker에서)
+    if (colorEditMode && onCellSelect) {
+      const pieceId = `${x}_${y}_${z}`
+      onCellSelect(pieceId, faceIndex || 0)
+      return
+    }
+    
+    // 일반 모드: 클릭된 조각의 위치를 기준으로 회전할 면 결정
     if (Math.abs(x) === 1) {
       addRotation(x === 1 ? 'R' : 'L')
     } else if (Math.abs(y) === 1) {
@@ -326,7 +333,7 @@ const RubiksCube = React.forwardRef(({ onDataUpdate }, ref) => {
     } else if (Math.abs(z) === 1) {
       addRotation(z === 1 ? 'F' : 'B')
     }
-  }, [isRotating, addRotation])
+  }, [isRotating, addRotation, colorEditMode, onFaceColorChange])
 
   // 렌더링할 조각들 분리
   const { rotatingPieces, staticPieces } = useMemo(() => {
@@ -342,10 +349,25 @@ const RubiksCube = React.forwardRef(({ onDataUpdate }, ref) => {
     }
   }, [pieces, onDataUpdate])
 
+  // 면 색상 업데이트 함수
+  const updatePieceFaceColor = useCallback((pieceId, faceIndex, color) => {
+    setPieces(prevPieces => 
+      prevPieces.map(piece => {
+        if (piece.id === pieceId) {
+          const newFaceColors = [...piece.faceColors]
+          newFaceColors[faceIndex] = color
+          return { ...piece, faceColors: newFaceColors }
+        }
+        return piece
+      })
+    )
+  }, [])
+
   // ref 설정
   React.useImperativeHandle(ref, () => ({
     getPieces: () => pieces,
-    addRotation: addRotation
+    addRotation: addRotation,
+    updatePieceFaceColor: updatePieceFaceColor
   }))
 
   return (
@@ -357,6 +379,7 @@ const RubiksCube = React.forwardRef(({ onDataUpdate }, ref) => {
           position={piece.position}
           faceColors={piece.faceColors}
           onClick={handlePieceClick}
+          selectedCell={selectedCell}
           isStatic={true}
         />
       ))}
@@ -372,6 +395,7 @@ const RubiksCube = React.forwardRef(({ onDataUpdate }, ref) => {
             position={piece.position}
             faceColors={piece.faceColors}
             onClick={handlePieceClick}
+            selectedCell={selectedCell}
             isStatic={false}
           />
         ))}

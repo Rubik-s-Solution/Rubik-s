@@ -34,10 +34,17 @@ function CubePiece({
   position, 
   faceColors, // 각 면의 현재 색상 배열
   onClick,
+  selectedCell,
   isStatic = true
 }) {
   const meshRef = useRef()
   const cubeSize = 0.95
+
+  // 이 조각이 선택된 셀인지 확인
+  const isSelected = selectedCell && 
+    selectedCell.x === position[0] && 
+    selectedCell.y === position[1] && 
+    selectedCell.z === position[2]
 
   // 캐시된 머티리얼 사용
   const materials = useMemo(() => {
@@ -47,21 +54,52 @@ function CubePiece({
   const handlePointerDown = (event) => {
     event.stopPropagation()
     if (onClick) {
-      onClick(event, { position })
+      // 클릭된 면 감지: 교차점의 법선 벡터로 면 결정
+      let faceIndex = 0
+      if (event.face) {
+        const normal = event.face.normal
+        // Three.js BoxGeometry의 면 순서: [+X, -X, +Y, -Y, +Z, -Z]
+        if (Math.abs(normal.x) > 0.5) {
+          faceIndex = normal.x > 0 ? 0 : 1  // Right, Left
+        } else if (Math.abs(normal.y) > 0.5) {
+          faceIndex = normal.y > 0 ? 2 : 3  // Top, Bottom  
+        } else if (Math.abs(normal.z) > 0.5) {
+          faceIndex = normal.z > 0 ? 4 : 5  // Front, Back
+        }
+      }
+      onClick(event, { position, faceIndex })
     }
   }
 
   return (
-    <mesh
-      ref={meshRef}
-      position={[position[0] * 1.05, position[1] * 1.05, position[2] * 1.05]}
-      onPointerDown={handlePointerDown}
-      castShadow
-      receiveShadow
-      material={materials}
-    >
-      <boxGeometry args={[cubeSize, cubeSize, cubeSize]} />
-    </mesh>
+    <group>
+      <mesh
+        ref={meshRef}
+        position={[position[0] * 1.05, position[1] * 1.05, position[2] * 1.05]}
+        scale={isSelected ? 1.1 : 1}
+        onPointerDown={handlePointerDown}
+        castShadow
+        receiveShadow
+        material={materials}
+      >
+        <boxGeometry args={[cubeSize, cubeSize, cubeSize]} />
+      </mesh>
+      
+      {/* 선택된 조각에 외곽선 효과 */}
+      {isSelected && (
+        <mesh
+          position={[position[0] * 1.05, position[1] * 1.05, position[2] * 1.05]}
+          scale={1.15}
+        >
+          <boxGeometry args={[cubeSize, cubeSize, cubeSize]} />
+          <meshBasicMaterial 
+            color="#FFD700" 
+            wireframe={true} 
+            wireframeLinewidth={3}
+          />
+        </mesh>
+      )}
+    </group>
   )
 }
 
