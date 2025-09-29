@@ -271,8 +271,7 @@ function App() {
       </div>
       
       <div className="info">
-        Built with <a href="https://threejs.org">Three.js</a> and{' '}
-        <a href="https://docs.pmnd.rs/react-three-fiber">React Three Fiber</a>
+        <h1>큐브 컨트롤은 개선 예정</h1>
       </div>
     </div>
   )

@@ -10,12 +10,6 @@ function Controls() {
     }
   }
 
-  const handleSolve = () => {
-    if (window.rubiksCube && !window.rubiksCube.isMoving) {
-      window.rubiksCube.solve()
-    }
-  }
-
   const handleUndo = () => {
     if (window.rubiksCube && !window.rubiksCube.isMoving) {
       window.rubiksCube.undo()
@@ -47,13 +41,6 @@ function Controls() {
         disabled={isMoving}
       >
         Shuffle
-      </button>
-      
-      <button 
-        onClick={handleSolve}
-        disabled={isMoving}
-      >
-        Solve
       </button>
       
       <button 
