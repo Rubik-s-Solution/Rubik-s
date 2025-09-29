@@ -12,19 +12,237 @@ html, body {
   position: relative;
 }
 
-.scene-container {
-  height: 100%;
-  width: 100%;
-}
-
-.controls {
+.app-header {
   position: absolute;
   top: 20px;
   left: 20px;
   z-index: 100;
   display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.content-container {
+  height: 100%;
+  width: 100%;
+  display: flex;
+}
+
+.content-container.view-3d .scene-container {
+  width: 100%;
+  height: 100%;
+}
+
+.content-container.view-net {
+  justify-content: center;
+  align-items: center;
+  overflow: auto;
+}
+
+.content-container.view-both {
+  flex-direction: row;
+  position: relative;
+}
+
+.content-container.view-both .scene-container {
+  height: 100%;
+  transition: width 0.1s ease;
+}
+
+.content-container.view-both .net-container {
+  height: 100%;
+  overflow: auto;
+  background: #444;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: width 0.1s ease;
+}
+
+.scene-container {
+  height: 100%;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.net-container {
+  padding: 20px;
+  background: #444;
+  color: #eee;
+}
+
+.controls {
+  display: flex;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.view-mode-selector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 10px;
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.view-mode-label {
+  color: #eee;
+  font-size: 14px;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.view-mode-buttons {
+  display: flex;
+  gap: 5px;
+}
+
+.view-mode-button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #ccc;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.view-mode-button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.5);
+  color: #fff;
+}
+
+.view-mode-button.active {
+  background: rgba(255, 118, 0, 0.8);
+  border-color: #ff7600;
+  color: #fff;
+}
+
+.view-mode-button.active:hover {
+  background: rgba(255, 118, 0, 0.9);
+}
+
+.cube-net {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 100%;
+  overflow: auto;
+}
+
+.cube-net svg {
+  max-width: 100%;
+  height: auto;
+  background: #333;
+  border-radius: 8px;
+}
+
+/* 반응형 레이아웃 */
+@media (max-width: 1200px) {
+  .content-container.view-both {
+    flex-direction: column;
+  }
+  
+  .content-container.view-both .scene-container {
+    width: 100%;
+    height: 60%;
+  }
+  
+  .content-container.view-both .net-container {
+    width: 100%;
+    height: 40%;
+  }
+}
+
+/* 리사이저 스타일 */
+.resizer {
+  width: 6px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  transition: background 0.2s ease;
+  user-select: none;
+  touch-action: none;
+}
+
+.resizer:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.resizer.resizing {
+  background: rgba(255, 118, 0, 0.6);
+}
+
+.resizer-handle {
+  width: 3px;
+  height: 60px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-evenly;
+  pointer-events: none;
+}
+
+.resizer-line {
+  width: 2px;
+  height: 2px;
+  background: #ccc;
+  border-radius: 50%;
+}
+
+.resizer:hover .resizer-line {
+  background: #fff;
+}
+
+.resizer.resizing .resizer-line {
+  background: #ff7600;
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    flex-direction: column;
+    gap: 10px;
+  }
+  
+  .controls {
+    gap: 5px;
+  }
+  
+  .controls button {
+    padding: 8px 16px;
+    font-size: 12px;
+  }
+  
+  .view-mode-buttons {
+    flex-wrap: wrap;
+  }
+  
+  .view-mode-button {
+    font-size: 11px;
+    padding: 5px 8px;
+  }
+  
+  /* 모바일에서는 리사이저 크기 증가 */
+  .resizer {
+    width: 10px;
+  }
+  
+  .resizer-handle {
+    width: 5px;
+  }
 }
 
 .controls button {

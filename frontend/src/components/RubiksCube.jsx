@@ -22,7 +22,7 @@ const getMaterial = (color) => {
   return materialCache.get(color)
 }
 
-function RubiksCube() {
+const RubiksCube = React.forwardRef(({ onDataUpdate }, ref) => {
   // 26개의 큐브 조각 생성
   const [pieces, setPieces] = useState(() => {
     const COLORS = {
@@ -335,6 +335,19 @@ function RubiksCube() {
     return { rotatingPieces: rotating, staticPieces: stationary }
   }, [pieces, rotationState.activeGroup])
 
+  // 데이터 업데이트 전달
+  React.useEffect(() => {
+    if (onDataUpdate && pieces.length > 0) {
+      onDataUpdate(pieces)
+    }
+  }, [pieces, onDataUpdate])
+
+  // ref 설정
+  React.useImperativeHandle(ref, () => ({
+    getPieces: () => pieces,
+    addRotation: addRotation
+  }))
+
   return (
     <group ref={groupRef}>
       {/* 정적 조각들 */}
@@ -365,6 +378,8 @@ function RubiksCube() {
       </group>
     </group>
   )
-}
+})
+
+RubiksCube.displayName = 'RubiksCube'
 
 export default RubiksCube
