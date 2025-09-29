@@ -1,0 +1,92 @@
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.app {
+  height: 100vh;
+  overflow: hidden;
+  background-color: #616161;
+  color: #eee;
+  position: relative;
+}
+
+.scene-container {
+  height: 100%;
+  width: 100%;
+}
+
+.controls {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  z-index: 100;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.controls button {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #eee;
+  padding: 10px 20px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+.controls button:hover {
+  background: rgba(255, 118, 0, 0.8);
+  border-color: #ff7600;
+}
+
+.controls button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.controls button:disabled:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.controls select {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #eee;
+  padding: 10px;
+  border-radius: 5px;
+  font-size: 14px;
+}
+
+.controls select option {
+  background: #303030;
+  color: #eee;
+}
+
+.keyboard-help {
+  font-size: 12px;
+  color: #aaa;
+  margin-top: 10px;
+  max-width: 300px;
+}
+
+.info {
+  position: absolute;
+  bottom: 20px;
+  left: 20px;
+  font-size: 14px;
+  color: #ccc;
+}
+
+.info a {
+  color: #ff7600;
+  text-decoration: none;
+}
+
+.info a:hover {
+  text-decoration: underline;
+}
