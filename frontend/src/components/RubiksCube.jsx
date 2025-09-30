@@ -366,6 +366,25 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
   // ref 설정
   React.useImperativeHandle(ref, () => ({
     getPieces: () => pieces,
+    setPieces: (newPieces) => {
+      console.log('setPieces called with:', newPieces)
+      
+      // 회전 중이면 모든 회전을 완료할 때까지 기다림
+      if (isRotating || rotationQueue.length > 0) {
+        console.log('Rotation in progress, waiting...')
+        const waitForRotationComplete = () => {
+          if (!isRotating && rotationQueue.length === 0) {
+            console.log('Rotation completed, updating pieces')
+            setPieces(newPieces)
+          } else {
+            setTimeout(waitForRotationComplete, 100)
+          }
+        }
+        waitForRotationComplete()
+      } else {
+        setPieces(newPieces)
+      }
+    },
     addRotation: addRotation,
     updatePieceFaceColor: updatePieceFaceColor
   }))

@@ -399,3 +399,174 @@ html, body {
 .info a:hover {
   text-decoration: underline;
 }
+
+/* JSON 큐브 색상 로더 스타일 */
+.json-loader {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.json-buttons {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.load-json-btn {
+  padding: 10px 15px;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  min-width: 120px;
+}
+
+.load-json-btn:hover:not(:disabled) {
+  background-color: #45a049;
+  transform: translateY(-1px);
+}
+
+.load-json-btn:disabled {
+  background-color: #666;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.file-input {
+  display: none;
+}
+
+.file-input-label {
+  padding: 10px 15px;
+  background-color: #2196F3;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  min-width: 120px;
+  text-align: center;
+  display: inline-block;
+}
+
+.file-input-label:hover:not(.disabled) {
+  background-color: #1976D2;
+  transform: translateY(-1px);
+}
+
+.file-input-label.disabled {
+  background-color: #666;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.json-success {
+  background-color: #4CAF50;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  max-width: 200px;
+  word-break: break-word;
+  animation: fadeIn 0.3s ease-in;
+}
+
+.json-error {
+  background-color: #f44336;
+  color: white;
+  padding: 5px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  max-width: 200px;
+  word-break: break-word;
+  animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* 색상 가이드 스타일 */
+.color-guide {
+  position: relative;
+}
+
+.color-guide-toggle {
+  padding: 8px 12px;
+  background-color: #2196F3;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background-color 0.2s ease;
+}
+
+.color-guide-toggle:hover {
+  background-color: #1976D2;
+}
+
+.color-guide-panel {
+  position: absolute;
+  top: 40px;
+  left: 0;
+  background-color: rgba(0, 0, 0, 0.9);
+  border: 1px solid #555;
+  border-radius: 6px;
+  padding: 15px;
+  min-width: 200px;
+  z-index: 1000;
+  animation: fadeIn 0.3s ease-in;
+}
+
+.color-guide-panel h4 {
+  margin: 0 0 10px 0;
+  color: #eee;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.color-mappings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.color-mapping-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.color-char {
+  font-family: 'Courier New', monospace;
+  font-weight: bold;
+  color: #fff;
+  background-color: #333;
+  padding: 2px 6px;
+  border-radius: 3px;
+  min-width: 20px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.color-sample {
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  border: 1px solid #666;
+  flex-shrink: 0;
+}
+
+.color-name {
+  color: #ddd;
+  font-size: 12px;
+}

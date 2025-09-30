@@ -7,6 +7,8 @@ import CubeNet from './components/CubeNet'
 import ViewModeSelector from './components/ViewModeSelector'
 import Resizer from './components/Resizer'
 import ColorPicker, { COLORS } from './components/ColorPicker'
+import ColorGuide from './components/ColorGuide'
+import { loadAndConvertCubeData } from './utils/cubeColorLoader'
 import './App.css'
 
 function App() {
@@ -16,7 +18,11 @@ function App() {
   const [colorEditMode, setColorEditMode] = useState(false)
   const [selectedColor, setSelectedColor] = useState('red')
   const [selectedCell, setSelectedCell] = useState(null) // 선택된 칸 {pieceId, faceIndex}
+  const [isLoadingJson, setIsLoadingJson] = useState(false)
+  const [jsonLoadError, setJsonLoadError] = useState(null)
+  const [jsonLoadSuccess, setJsonLoadSuccess] = useState(false)
   const cubeRef = useRef()
+  const fileInputRef = useRef()
 
   // 큐브 데이터 업데이트 핸들러
   const handleCubeDataUpdate = (pieces) => {
@@ -149,6 +155,89 @@ function App() {
     }
   }
 
+  // JSON 파일에서 큐브 색상 데이터 로드
+  const handleLoadCubeColorsFromJson = async () => {
+    setIsLoadingJson(true)
+    setJsonLoadError(null)
+    setJsonLoadSuccess(false)
+    
+    try {
+      console.log('큐브 색상 JSON 로드 시작...')
+      const pieces = await loadAndConvertCubeData('/cube_colors.json')
+      console.log('변환된 큐브 조각:', pieces)
+      
+      if (cubeRef.current && cubeRef.current.setPieces) {
+        cubeRef.current.setPieces(pieces)
+        setCubeData(pieces)
+        setJsonLoadSuccess(true)
+        console.log('큐브 색상 데이터가 성공적으로 적용되었습니다.')
+        
+        // 성공 메시지를 3초 후에 숨김
+        setTimeout(() => {
+          setJsonLoadSuccess(false)
+        }, 3000)
+      } else {
+        throw new Error('cubeRef.current.setPieces 메소드를 찾을 수 없습니다.')
+      }
+    } catch (error) {
+      console.error('큐브 색상 JSON 로드 실패:', error)
+      setJsonLoadError(error.message)
+      
+      // 에러 메시지를 5초 후에 숨김
+      setTimeout(() => {
+        setJsonLoadError(null)
+      }, 5000)
+    } finally {
+      setIsLoadingJson(false)
+    }
+  }
+
+  // 파일 업로드로 JSON 로드
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0]
+    if (!file) return
+
+    if (!file.name.endsWith('.json')) {
+      setJsonLoadError('JSON 파일만 업로드 가능합니다.')
+      setTimeout(() => setJsonLoadError(null), 3000)
+      return
+    }
+
+    setIsLoadingJson(true)
+    setJsonLoadError(null)
+    setJsonLoadSuccess(false)
+
+    try {
+      const text = await file.text()
+      const cubeData = JSON.parse(text)
+      
+      // cubeColorLoader의 convertJsonToCubePieces 함수 사용
+      const { convertJsonToCubePieces } = await import('./utils/cubeColorLoader')
+      const pieces = convertJsonToCubePieces(cubeData)
+      
+      if (cubeRef.current && cubeRef.current.setPieces) {
+        cubeRef.current.setPieces(pieces)
+        setCubeData(pieces)
+        setJsonLoadSuccess(true)
+        console.log('업로드된 큐브 색상 데이터가 성공적으로 적용되었습니다.')
+        
+        setTimeout(() => setJsonLoadSuccess(false), 3000)
+      } else {
+        throw new Error('cubeRef.current.setPieces 메소드를 찾을 수 없습니다.')
+      }
+    } catch (error) {
+      console.error('파일 업로드 실패:', error)
+      setJsonLoadError(`파일 처리 실패: ${error.message}`)
+      setTimeout(() => setJsonLoadError(null), 5000)
+    } finally {
+      setIsLoadingJson(false)
+      // 파일 입력 초기화
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
   // 면 색상 변경 (구버전 호환)
   const handleFaceColorChange = (pieceId, faceIndex) => {
     if (!selectedColor) return
@@ -166,6 +255,47 @@ function App() {
       <div className="app-header">
         <Controls cubeRef={cubeRef} />
         <ViewModeSelector viewMode={viewMode} onViewModeChange={setViewMode} />
+        
+        {/* JSON 큐브 색상 로드 버튼 */}
+        <div className="json-loader">
+          <div className="json-buttons">
+            <button 
+              onClick={handleLoadCubeColorsFromJson}
+              disabled={isLoadingJson}
+              className="load-json-btn"
+            >
+              {isLoadingJson ? '로딩 중...' : '기본 JSON 로드'}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".json"
+              onChange={handleFileUpload}
+              disabled={isLoadingJson}
+              className="file-input"
+              id="json-file-input"
+            />
+            <label 
+              htmlFor="json-file-input" 
+              className={`file-input-label ${isLoadingJson ? 'disabled' : ''}`}
+            >
+              JSON 파일 업로드
+            </label>
+          </div>
+          {jsonLoadSuccess && (
+            <div className="json-success">
+              ✓ 색상 데이터가 성공적으로 로드되었습니다!
+            </div>
+          )}
+          {jsonLoadError && (
+            <div className="json-error">
+              ✗ 에러: {jsonLoadError}
+            </div>
+          )}
+        </div>
+        
+        <ColorGuide />
+        
         <ColorPicker 
           selectedColor={selectedColor}
           onColorSelect={handleColorSelect}
