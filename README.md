@@ -23,7 +23,7 @@
     -   `Three.js` (for 3D Rendering)
 -   **Backend**:
     -   `Python`
-    -   `Flask` (for API Server)
+    -   `FastAPI` (for API Server)
 -   **AI / Computer Vision**:
     -   `OpenCV`
     -   `NumPy`
