@@ -8,6 +8,7 @@ import ViewModeSelector from './components/ViewModeSelector'
 import Resizer from './components/Resizer'
 import ColorPicker, { COLORS } from './components/ColorPicker'
 import ColorGuide from './components/ColorGuide'
+import ImageUpload from './components/ImageUpload'
 import { loadAndConvertCubeData } from './utils/cubeColorLoader'
 import './App.css'
 
@@ -21,6 +22,8 @@ function App() {
   const [isLoadingJson, setIsLoadingJson] = useState(false)
   const [jsonLoadError, setJsonLoadError] = useState(null)
   const [jsonLoadSuccess, setJsonLoadSuccess] = useState(false)
+  const [showImageUpload, setShowImageUpload] = useState(false)
+  const [uploadedImages, setUploadedImages] = useState({}) // 면별 업로드된 이미지
   const cubeRef = useRef()
   const fileInputRef = useRef()
 
@@ -250,6 +253,32 @@ function App() {
     }
   }
 
+  // 이미지 업로드 모드 토글
+  const handleImageUploadToggle = () => {
+    setShowImageUpload(!showImageUpload)
+  }
+
+  // 이미지 업로드 핸들러
+  const handleImageUpload = (face, imageData) => {
+    setUploadedImages(prev => {
+      const newImages = { ...prev }
+      if (imageData) {
+        // 기존 이미지 URL이 있다면 해제
+        if (newImages[face]?.url) {
+          URL.revokeObjectURL(newImages[face].url)
+        }
+        newImages[face] = imageData
+      } else {
+        // 이미지 제거
+        if (newImages[face]?.url) {
+          URL.revokeObjectURL(newImages[face].url)
+        }
+        delete newImages[face]
+      }
+      return newImages
+    })
+  }
+
   return (
     <div className="app">
       <div className="app-header">
@@ -303,6 +332,15 @@ function App() {
           onColorEditToggle={handleColorEditToggle}
           selectedCell={selectedCell}
         />
+        
+        {/* 이미지 업로드 버튼 */}
+        <button 
+          className="image-upload-toggle"
+          onClick={handleImageUploadToggle}
+          title="이미지 업로드"
+        >
+          📷 이미지 업로드
+        </button>
       </div>
       
       <div className={`content-container view-${viewMode.toLowerCase()}`}>
@@ -403,6 +441,28 @@ function App() {
       <div className="info">
         <h1>큐브 컨트롤은 개선 예정</h1>
       </div>
+
+      {/* 이미지 업로드 모달 */}
+      {showImageUpload && (
+        <div className="modal-overlay" onClick={handleImageUploadToggle}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>이미지 업로드</h2>
+              <button 
+                className="modal-close"
+                onClick={handleImageUploadToggle}
+                title="닫기"
+              >
+                ✕
+              </button>
+            </div>
+            <ImageUpload 
+              onImageUpload={handleImageUpload}
+              uploadedImages={uploadedImages}
+            />
+          </div>
+        </div>
+      )}
     </div>
   )
 }
