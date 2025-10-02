@@ -1,4 +1,5 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
+import { uploadImageToBackend, getCubeImages, deleteCubeImage, getImageUrl, checkApiHealth } from '../utils/imageApi'
 import './ImageUpload.css'
 
 // 전개도 레이아웃 (십자형)
@@ -17,10 +18,45 @@ const NET_LAYOUT = [
 function ImageUpload({ onImageUpload, uploadedImages = {} }) {
   const [selectedFace, setSelectedFace] = useState(null)
   const [dragOver, setDragOver] = useState(null)
+  const [uploading, setUploading] = useState(false)
+  const [uploadStatus, setUploadStatus] = useState({ type: null, message: '' })
+  const [backendImages, setBackendImages] = useState({})
+  const [apiHealthy, setApiHealthy] = useState(false)
   const fileInputRef = useRef()
+
+  // 컴포넌트 마운트 시 백엔드 상태 확인 및 이미지 로드
+  useEffect(() => {
+    checkBackendHealth()
+    loadBackendImages()
+  }, [])
+
+  // 백엔드 API 상태 확인
+  const checkBackendHealth = async () => {
+    try {
+      await checkApiHealth()
+      setApiHealthy(true)
+      setUploadStatus({ type: 'success', message: '백엔드 서버가 연결되었습니다.' })
+      setTimeout(() => setUploadStatus({ type: null, message: '' }), 3000)
+    } catch (error) {
+      setApiHealthy(false)
+      setUploadStatus({ type: 'error', message: '백엔드 서버에 연결할 수 없습니다. (로컬 업로드만 가능)' })
+    }
+  }
+
+  // 백엔드에서 이미지 정보 로드
+  const loadBackendImages = async () => {
+    try {
+      const result = await getCubeImages()
+      setBackendImages(result.data || {})
+    } catch (error) {
+      console.log('백엔드 이미지 로드 실패 (정상 - 서버가 없을 수 있음):', error.message)
+    }
+  }
 
   // 면 클릭 핸들러
   const handleFaceClick = (face) => {
+    if (uploading) return
+    
     setSelectedFace(face)
     // 파일 선택 다이얼로그 열기
     if (fileInputRef.current) {
@@ -30,24 +66,55 @@ function ImageUpload({ onImageUpload, uploadedImages = {} }) {
   }
 
   // 파일 선택 핸들러
-  const handleFileSelect = (event) => {
+  const handleFileSelect = async (event) => {
     const file = event.target.files[0]
     const face = event.target.getAttribute('data-face')
     
     if (file && face) {
-      // 이미지 파일 유효성 검사
-      if (!file.type.startsWith('image/')) {
-        alert('이미지 파일만 업로드할 수 있습니다.')
-        return
+      await processImageUpload(file, face)
+    }
+
+    // 파일 입력 초기화
+    event.target.value = ''
+  }
+
+  // 이미지 업로드 처리
+  const processImageUpload = async (file, face) => {
+    // 이미지 파일 유효성 검사
+    if (!file.type.startsWith('image/')) {
+      setUploadStatus({ type: 'error', message: '이미지 파일만 업로드할 수 있습니다.' })
+      setTimeout(() => setUploadStatus({ type: null, message: '' }), 3000)
+      return
+    }
+
+    // 파일 크기 제한 (5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      setUploadStatus({ type: 'error', message: '파일 크기는 5MB 이하여야 합니다.' })
+      setTimeout(() => setUploadStatus({ type: null, message: '' }), 3000)
+      return
+    }
+
+    setUploading(true)
+    setUploadStatus({ type: 'info', message: `${face} 면에 이미지를 업로드 중입니다...` })
+
+    try {
+      // 백엔드가 연결된 경우 서버에 업로드
+      if (apiHealthy) {
+        const result = await uploadImageToBackend(face, file)
+        
+        // 백엔드 이미지 정보 업데이트
+        setBackendImages(prev => ({
+          ...prev,
+          [face]: result.data
+        }))
+
+        setUploadStatus({ type: 'success', message: result.message })
+      } else {
+        // 백엔드가 없는 경우 로컬만 처리
+        setUploadStatus({ type: 'warning', message: '백엔드 서버가 없어서 로컬에만 저장됩니다.' })
       }
 
-      // 파일 크기 제한 (5MB)
-      if (file.size > 5 * 1024 * 1024) {
-        alert('파일 크기는 5MB 이하여야 합니다.')
-        return
-      }
-
-      // 이미지 미리보기를 위한 URL 생성
+      // 이미지 미리보기를 위한 URL 생성 (로컬 사용)
       const imageUrl = URL.createObjectURL(file)
       
       // 부모 컴포넌트에 이미지 정보 전달
@@ -58,10 +125,19 @@ function ImageUpload({ onImageUpload, uploadedImages = {} }) {
         size: file.size,
         type: file.type
       })
-    }
 
-    // 파일 입력 초기화
-    event.target.value = ''
+      setTimeout(() => setUploadStatus({ type: null, message: '' }), 3000)
+      
+    } catch (error) {
+      console.error('이미지 업로드 실패:', error)
+      setUploadStatus({ 
+        type: 'error', 
+        message: `업로드 실패: ${error.message}` 
+      })
+      setTimeout(() => setUploadStatus({ type: null, message: '' }), 5000)
+    } finally {
+      setUploading(false)
+    }
   }
 
   // 드래그 앤 드롭 핸들러
@@ -74,40 +150,52 @@ function ImageUpload({ onImageUpload, uploadedImages = {} }) {
     setDragOver(null)
   }
 
-  const handleDrop = (event, face) => {
+  const handleDrop = async (event, face) => {
     event.preventDefault()
     setDragOver(null)
+
+    if (uploading) return
 
     const files = event.dataTransfer.files
     if (files.length > 0) {
       const file = files[0]
-      
-      if (!file.type.startsWith('image/')) {
-        alert('이미지 파일만 업로드할 수 있습니다.')
-        return
-      }
-
-      if (file.size > 5 * 1024 * 1024) {
-        alert('파일 크기는 5MB 이하여야 합니다.')
-        return
-      }
-
-      const imageUrl = URL.createObjectURL(file)
-      
-      onImageUpload(face, {
-        file,
-        url: imageUrl,
-        name: file.name,
-        size: file.size,
-        type: file.type
-      })
+      await processImageUpload(file, face)
     }
   }
 
   // 이미지 제거 핸들러
-  const handleRemoveImage = (face, event) => {
+  const handleRemoveImage = async (face, event) => {
     event.stopPropagation()
-    onImageUpload(face, null)
+    
+    if (uploading) return
+
+    try {
+      // 백엔드가 연결된 경우 서버에서도 삭제
+      if (apiHealthy && backendImages[face]) {
+        await deleteCubeImage(face)
+        
+        // 백엔드 이미지 정보에서 제거
+        setBackendImages(prev => {
+          const newImages = { ...prev }
+          delete newImages[face]
+          return newImages
+        })
+        
+        setUploadStatus({ type: 'success', message: `${face} 면의 이미지가 삭제되었습니다.` })
+        setTimeout(() => setUploadStatus({ type: null, message: '' }), 2000)
+      }
+      
+      // 로컬에서 제거
+      onImageUpload(face, null)
+      
+    } catch (error) {
+      console.error('이미지 삭제 실패:', error)
+      setUploadStatus({ 
+        type: 'error', 
+        message: `삭제 실패: ${error.message}` 
+      })
+      setTimeout(() => setUploadStatus({ type: null, message: '' }), 3000)
+    }
   }
 
   const faceSize = 120
@@ -118,6 +206,31 @@ function ImageUpload({ onImageUpload, uploadedImages = {} }) {
       <p className="upload-instruction">
         각 면을 클릭하거나 드래그 앤 드롭으로 이미지를 업로드하세요
       </p>
+      
+      {/* 업로드 상태 표시 */}
+      {uploadStatus.message && (
+        <div className={`upload-status ${uploadStatus.type}`}>
+          {uploading && <span className="loading-spinner">⏳</span>}
+          {uploadStatus.message}
+        </div>
+      )}
+      
+      {/* 백엔드 연결 상태 */}
+      <div className="backend-status">
+        <span className={`status-indicator ${apiHealthy ? 'connected' : 'disconnected'}`}>
+          {apiHealthy ? '🟢' : '🔴'}
+        </span>
+        백엔드 서버: {apiHealthy ? '연결됨' : '연결 안됨'}
+        {!apiHealthy && (
+          <button 
+            className="retry-button" 
+            onClick={checkBackendHealth}
+            disabled={uploading}
+          >
+            재연결 시도
+          </button>
+        )}
+      </div>
       
       <div className="cube-net-upload">
         <svg 
@@ -138,7 +251,7 @@ function ImageUpload({ onImageUpload, uploadedImages = {} }) {
                   y={y * faceSize}
                   width={faceSize}
                   height={faceSize}
-                  className={`face-area ${isSelected ? 'selected' : ''} ${isDragOver ? 'drag-over' : ''}`}
+                  className={`face-area ${isSelected ? 'selected' : ''} ${isDragOver ? 'drag-over' : ''} ${uploading ? 'uploading' : ''}`}
                   onClick={() => handleFaceClick(face)}
                   onDragOver={(e) => handleDragOver(e, face)}
                   onDragLeave={handleDragLeave}
