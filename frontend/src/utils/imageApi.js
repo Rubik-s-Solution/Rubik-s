@@ -103,3 +103,26 @@ export const checkApiHealth = async () => {
     throw error
   }
 }
+
+/**
+ * 업로드된 큐브 이미지들을 분석하여 색상 데이터 추출
+ * @returns {Promise<Object>} - 분석 결과 (각 면의 3x3 색상 그리드)
+ */
+export const analyzeCubeImages = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/analyze-cube-images`, {
+      method: 'POST',
+    })
+
+    const result = await response.json()
+    
+    if (!response.ok) {
+      throw new Error(result.detail || `HTTP error! status: ${response.status}`)
+    }
+
+    return result
+  } catch (error) {
+    console.error('큐브 이미지 분석 실패:', error)
+    throw error
+  }
+}

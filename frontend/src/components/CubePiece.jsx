@@ -71,6 +71,12 @@ function CubePiece({
     }
   }
 
+  // 우클릭 메뉴 방지
+  const handleContextMenu = (event) => {
+    event.stopPropagation()
+    event.nativeEvent.preventDefault()
+  }
+
   return (
     <group>
       <mesh
@@ -78,6 +84,7 @@ function CubePiece({
         position={[position[0] * 1.05, position[1] * 1.05, position[2] * 1.05]}
         scale={isSelected ? 1.1 : 1}
         onPointerDown={handlePointerDown}
+        onContextMenu={handleContextMenu}
         castShadow
         receiveShadow
         material={materials}

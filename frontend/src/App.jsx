@@ -279,6 +279,108 @@ function App() {
     })
   }
 
+  // 색상 분석 완료 핸들러
+  const handleAnalysisComplete = (cubeColors, analysisResults) => {
+    console.log('색상 분석 완료:', cubeColors)
+    
+    // test.py의 색상 레이블을 THREE.js 색상 번호로 변환
+    const colorMap = {
+      'w': 0xFFFFFF,  // white
+      'y': 0xFFD500,  // yellow
+      'o': 0xFF5800,  // orange
+      'r': 0xC41E3A,  // red
+      'g': 0x009E60,  // green
+      'b': 0x0051BA,  // blue
+      '?': 0x212121   // black (미인식)
+    }
+    
+    // 면 매핑: 백엔드(U,D,F,B,L,R) → Three.js(R,L,U,D,F,B) 인덱스
+    const faceIndexMap = {
+      'R': 0,
+      'L': 1,
+      'U': 2,
+      'D': 3,
+      'F': 4,
+      'B': 5
+    }
+    
+    // 각 큐브 조각의 위치와 면 색상 업데이트
+    if (cubeRef.current && cubeRef.current.setPieces) {
+      // 기존 큐브 데이터를 복사하여 수정
+      const updatedPieces = []
+      
+      for (let x = -1; x <= 1; x++) {
+        for (let y = -1; y <= 1; y++) {
+          for (let z = -1; z <= 1; z++) {
+            if (x === 0 && y === 0 && z === 0) continue // 중앙 제외
+            
+            const faceColors = [
+              0x212121, // Right (+X)
+              0x212121, // Left (-X)
+              0x212121, // Top (+Y)
+              0x212121, // Bottom (-Y)
+              0x212121, // Front (+Z)
+              0x212121  // Back (-Z)
+            ]
+            
+            // 각 면의 색상 설정
+            for (const [faceName, grid] of Object.entries(cubeColors)) {
+              const faceIndex = faceIndexMap[faceName]
+              if (faceIndex === undefined) continue
+              
+              // 해당 조각이 이 면에 속하는지 확인
+              let belongsToFace = false
+              let row = 0, col = 0
+              
+              if (faceName === 'R' && x === 1) {
+                belongsToFace = true
+                row = 1 - y  // y: 1,0,-1 → row: 0,1,2
+                col = 1 - z  // z: 1,0,-1 → col: 0,1,2
+              } else if (faceName === 'L' && x === -1) {
+                belongsToFace = true
+                row = 1 - y
+                col = z + 1
+              } else if (faceName === 'U' && y === 1) {
+                belongsToFace = true
+                row = 1 - z  // z: 1,0,-1 → row: 0,1,2
+                col = x + 1  // x: -1,0,1 → col: 0,1,2
+              } else if (faceName === 'D' && y === -1) {
+                belongsToFace = true
+                row = z + 1
+                col = x + 1
+              } else if (faceName === 'F' && z === 1) {
+                belongsToFace = true
+                row = 1 - y
+                col = x + 1
+              } else if (faceName === 'B' && z === -1) {
+                belongsToFace = true
+                row = 1 - y
+                col = 1 - x
+              }
+              
+              if (belongsToFace && row >= 0 && row < 3 && col >= 0 && col < 3) {
+                const colorLabel = grid[row][col]
+                faceColors[faceIndex] = colorMap[colorLabel] || 0x212121
+              }
+            }
+            
+            updatedPieces.push({
+              id: `${x}_${y}_${z}`,
+              position: [x, y, z],
+              faceColors: faceColors
+            })
+          }
+        }
+      }
+      
+      // 큐브에 새로운 색상 데이터 적용
+      cubeRef.current.setPieces(updatedPieces)
+      setCubeData(updatedPieces)
+      
+      console.log('큐브에 색상이 성공적으로 적용되었습니다!')
+    }
+  }
+
   return (
     <div className="app">
       <div className="app-header">
@@ -372,6 +474,7 @@ function App() {
               logarithmicDepthBuffer: true
             }}
             dpr={[1, 2]}
+            onContextMenu={(e) => e.preventDefault()}
           >
             <ambientLight intensity={0.6} />
             <directionalLight 
@@ -459,6 +562,7 @@ function App() {
             <ImageUpload 
               onImageUpload={handleImageUpload}
               uploadedImages={uploadedImages}
+              onAnalysisComplete={handleAnalysisComplete}
             />
           </div>
         </div>

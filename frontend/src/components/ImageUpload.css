@@ -70,13 +70,20 @@
 .backend-status {
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 20px;
-  padding: 8px 12px;
+  padding: 12px;
   background-color: #333;
   border-radius: 6px;
   font-size: 13px;
   color: #ccc;
+}
+
+.status-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .status-indicator {
@@ -102,6 +109,40 @@
 .retry-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 색상 분석 버튼 */
+.analyze-button {
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 6px rgba(102, 126, 234, 0.3);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.analyze-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.5);
+  background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+}
+
+.analyze-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.analyze-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .cube-net-upload {

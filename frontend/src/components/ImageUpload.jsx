@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { uploadImageToBackend, getCubeImages, deleteCubeImage, getImageUrl, checkApiHealth } from '../utils/imageApi'
+import { uploadImageToBackend, getCubeImages, deleteCubeImage, getImageUrl, checkApiHealth, analyzeCubeImages } from '../utils/imageApi'
 import './ImageUpload.css'
 
 // 전개도 레이아웃 (십자형)
@@ -15,10 +15,11 @@ const NET_LAYOUT = [
   { face: 'D', x: 1, y: 2, name: '아랫면' }  // Bottom
 ]
 
-function ImageUpload({ onImageUpload, uploadedImages = {} }) {
+function ImageUpload({ onImageUpload, uploadedImages = {}, onAnalysisComplete }) {
   const [selectedFace, setSelectedFace] = useState(null)
   const [dragOver, setDragOver] = useState(null)
   const [uploading, setUploading] = useState(false)
+  const [analyzing, setAnalyzing] = useState(false)
   const [uploadStatus, setUploadStatus] = useState({ type: null, message: '' })
   const [backendImages, setBackendImages] = useState({})
   const [apiHealthy, setApiHealthy] = useState(false)
@@ -88,7 +89,7 @@ function ImageUpload({ onImageUpload, uploadedImages = {} }) {
     }
 
     // 파일 크기 제한 (5MB)
-    if (file.size > 5 * 1024 * 1024) {
+    if (file.size > 10 * 1024 * 1024) {
       setUploadStatus({ type: 'error', message: '파일 크기는 5MB 이하여야 합니다.' })
       setTimeout(() => setUploadStatus({ type: null, message: '' }), 3000)
       return
@@ -198,6 +199,58 @@ function ImageUpload({ onImageUpload, uploadedImages = {} }) {
     }
   }
 
+  // 큐브 이미지 색상 분석 핸들러
+  const handleAnalyzeCube = async () => {
+    if (!apiHealthy) {
+      setUploadStatus({ 
+        type: 'error', 
+        message: '백엔드 서버에 연결되지 않았습니다.' 
+      })
+      setTimeout(() => setUploadStatus({ type: null, message: '' }), 3000)
+      return
+    }
+
+    if (Object.keys(uploadedImages).length < 6) {
+      setUploadStatus({ 
+        type: 'warning', 
+        message: '모든 6개 면의 이미지를 업로드해주세요.' 
+      })
+      setTimeout(() => setUploadStatus({ type: null, message: '' }), 3000)
+      return
+    }
+
+    setAnalyzing(true)
+    setUploadStatus({ type: 'info', message: '큐브 이미지를 분석하는 중입니다...' })
+
+    try {
+      const result = await analyzeCubeImages()
+      
+      if (result.success) {
+        setUploadStatus({ 
+          type: 'success', 
+          message: '✅ 색상 분석 완료! 큐브에 색상을 적용합니다.' 
+        })
+        
+        // 분석 결과를 부모 컴포넌트로 전달
+        if (onAnalysisComplete) {
+          onAnalysisComplete(result.data.cube_colors, result.data.analysis_results)
+        }
+        
+        setTimeout(() => setUploadStatus({ type: null, message: '' }), 3000)
+      }
+      
+    } catch (error) {
+      console.error('큐브 이미지 분석 실패:', error)
+      setUploadStatus({ 
+        type: 'error', 
+        message: `분석 실패: ${error.message}` 
+      })
+      setTimeout(() => setUploadStatus({ type: null, message: '' }), 5000)
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
   const faceSize = 120
 
   return (
@@ -215,19 +268,32 @@ function ImageUpload({ onImageUpload, uploadedImages = {} }) {
         </div>
       )}
       
-      {/* 백엔드 연결 상태 */}
+      {/* 백엔드 연결 상태 및 분석 버튼 */}
       <div className="backend-status">
-        <span className={`status-indicator ${apiHealthy ? 'connected' : 'disconnected'}`}>
-          {apiHealthy ? '🟢' : '🔴'}
-        </span>
-        백엔드 서버: {apiHealthy ? '연결됨' : '연결 안됨'}
-        {!apiHealthy && (
+        <div className="status-info">
+          <span className={`status-indicator ${apiHealthy ? 'connected' : 'disconnected'}`}>
+            {apiHealthy ? '🟢' : '🔴'}
+          </span>
+          백엔드 서버: {apiHealthy ? '연결됨' : '연결 안됨'}
+          {!apiHealthy && (
+            <button 
+              className="retry-button" 
+              onClick={checkBackendHealth}
+              disabled={uploading}
+            >
+              재연결 시도
+            </button>
+          )}
+        </div>
+        
+        {/* 색상 분석 버튼 */}
+        {apiHealthy && Object.keys(uploadedImages).length > 0 && (
           <button 
-            className="retry-button" 
-            onClick={checkBackendHealth}
-            disabled={uploading}
+            className="analyze-button"
+            onClick={handleAnalyzeCube}
+            disabled={analyzing || uploading}
           >
-            재연결 시도
+            {analyzing ? '🔄 분석 중...' : '🎨 색상 분석 및 큐브에 적용'}
           </button>
         )}
       </div>

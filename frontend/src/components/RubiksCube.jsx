@@ -325,15 +325,18 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
       return
     }
     
+    // 마우스 버튼 확인: 0 = 좌클릭(정방향), 2 = 우클릭(역방향)
+    const direction = event.button === 2 ? -1 : 1
+    
     // 일반 모드: 클릭된 조각의 위치를 기준으로 회전할 면 결정
     if (Math.abs(x) === 1) {
-      addRotation(x === 1 ? 'R' : 'L')
+      addRotation(x === 1 ? 'R' : 'L', direction)
     } else if (Math.abs(y) === 1) {
-      addRotation(y === 1 ? 'U' : 'D')
+      addRotation(y === 1 ? 'U' : 'D', direction)
     } else if (Math.abs(z) === 1) {
-      addRotation(z === 1 ? 'F' : 'B')
+      addRotation(z === 1 ? 'F' : 'B', direction)
     }
-  }, [isRotating, addRotation, colorEditMode, onFaceColorChange])
+  }, [isRotating, addRotation, colorEditMode, onFaceColorChange, onCellSelect])
 
   // 렌더링할 조각들 분리
   const { rotatingPieces, staticPieces } = useMemo(() => {
