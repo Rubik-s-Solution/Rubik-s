@@ -1,0 +1,41 @@
+{
+  "file": "uploaded_images/cube_back.jpg",
+  "tiles": [
+    {
+      "number": 1,
+      "color": "GREEN"
+    },
+    {
+      "number": 2,
+      "color": "RED"
+    },
+    {
+      "number": 3,
+      "color": "GREEN"
+    },
+    {
+      "number": 4,
+      "color": "WHITE"
+    },
+    {
+      "number": 5,
+      "color": "YELLOW"
+    },
+    {
+      "number": 6,
+      "color": "WHITE"
+    },
+    {
+      "number": 7,
+      "color": "WHITE"
+    },
+    {
+      "number": 8,
+      "color": "GREEN"
+    },
+    {
+      "number": 9,
+      "color": "GREEN"
+    }
+  ]
+}
