@@ -32,15 +32,45 @@ def iou_rect(a: Tuple[float,float,float,float], b: Tuple[float,float,float,float
     return inter/union
 
 def sticker_mask(bgr: np.ndarray) -> np.ndarray:
-    """V가 밝고 (채도 높거나, 아주 낮은데 밝은 화이트)인 픽셀만 남김"""
-    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    """V가 밝고 (채도 높거나, 아주 낮은데 밝은 화이트)인 픽셀만 남김 - 적응형 임계값 사용"""
+    # 히스토그램 평활화로 조명 보정
+    lab = cv2.cvtColor(bgr, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    l = clahe.apply(l)
+    lab = cv2.merge([l,a,b])
+    bgr_enhanced = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
+    
+    hsv = cv2.cvtColor(bgr_enhanced, cv2.COLOR_BGR2HSV)
     H,S,V = cv2.split(hsv)
-    m_color  = (V>90) & (S>50)
-    m_white  = (V>180) & (S<40)
-    m = (m_color | m_white).astype(np.uint8)*255
+    
+    # 적응형 임계값 계산
+    v_mean = np.mean(V)
+    v_std = np.std(V)
+    s_mean = np.mean(S)
+    
+    # 밝기에 따라 임계값 동적 조정
+    v_thresh = max(70, min(110, v_mean - 0.5 * v_std))
+    s_thresh = max(35, min(60, s_mean - 0.3 * v_std))
+    
+    # 색상 스티커: 적당한 명도와 채도
+    m_color  = (V > v_thresh) & (S > s_thresh)
+    
+    # 흰색 스티커: 높은 명도, 낮은 채도
+    white_v_thresh = max(160, v_mean + 0.3 * v_std) if v_mean > 100 else 150
+    m_white  = (V > white_v_thresh) & (S < 45)
+    
+    # 어두운 조명 조건을 위한 추가 마스크
+    if v_mean < 120:  # 어두운 이미지인 경우
+        m_dark = (V > max(60, v_mean - v_std)) & (S > max(30, s_mean - 20))
+        m = (m_color | m_white | m_dark).astype(np.uint8)*255
+    else:
+        m = (m_color | m_white).astype(np.uint8)*255
+    
+    # 형태학적 연산으로 노이즈 제거 및 구멍 채우기
     k = cv2.getStructuringElement(cv2.MORPH_RECT,(5,5))
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN, k, 2)
-    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, k, 2)
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, k, 3)
     return m
 
 def is_grid_3x3(centers: np.ndarray, tolerance: float=0.3) -> bool:
@@ -67,20 +97,27 @@ def find_9_stickers(bgr: np.ndarray) -> Tuple[List[tuple], np.ndarray]:
     mask = sticker_mask(bgr)
     cnts,_ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cands = []
+    
+    # 이미지 크기에 따른 최소 면적 동적 조정
+    min_area = max(0.0008*H*W, 400)  # 더 작은 스티커도 감지
+    max_area = 0.18*H*W
+    
     for c in cnts:
         area = cv2.contourArea(c)
-        if area < 0.001*H*W or area > 0.15*H*W:
+        if area < min_area or area > max_area:
             continue
         rr = cv2.minAreaRect(c)
         (cx,cy),(w,h),ang = rr
-        if min(w,h) < 18:  # 너무 작으면 제외
+        if min(w,h) < 15:  # 더 작은 스티커 허용
             continue
-        aspect = min(w,h)/max(w,h)
+        aspect = min(w,h)/max(w,h) if max(w,h) > 0 else 0
         rect_area = w*h
         fill_ratio = area/max(1.0,rect_area)
-        if aspect < 0.70:     # 거의 정사각형
+        
+        # 더 유연한 조건
+        if aspect < 0.65:     # 정사각형 조건 완화
             continue
-        if fill_ratio < 0.55:  # 채움 정도
+        if fill_ratio < 0.50:  # 채움 비율 조건 완화
             continue
         cands.append((rr, area))
 
