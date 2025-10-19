@@ -5,58 +5,47 @@ import numpy as np
 import cv2
 import glob
 from sklearn.cluster import KMeans
+from scipy.optimize import linear_sum_assignment
 
-# ============= K-means 기반 색상 인식 =============
-def rgb_to_hsv(rgb):
-    """RGB를 HSV로 변환"""
-    r, g, b = rgb / 255.0
-    max_val = max(r, g, b)
-    min_val = min(r, g, b)
-    diff = max_val - min_val
-    
-    v = max_val
-    s = 0 if max_val == 0 else diff / max_val
-    
-    if diff == 0:
-        h = 0
-    elif max_val == r:
-        h = 60 * (((g - b) / diff) % 6)
-    elif max_val == g:
-        h = 60 * (((b - r) / diff) + 2)
-    else:
-        h = 60 * (((r - g) / diff) + 4)
-    
-    return h, s, v
+# ============= 기준 RGB 값 정의 =============
+REFERENCE_COLORS = {
+    'white':  np.array([255, 255, 255]),  # 흰색
+    'yellow': np.array([255, 255, 0]),    # 노란색
+    'orange': np.array([255, 165, 0]),    # 주황색
+    'red':    np.array([180, 0, 0]),      # 빨간색
+    'green':  np.array([0, 155, 0]),      # 초록색
+    'blue':   np.array([0, 0, 255])       # 파란색
+}
 
-def get_color_name_from_cluster_center(rgb):
-    """클러스터 중심 RGB로 색상 이름 판단"""
-    h, s, v = rgb_to_hsv(rgb)
+def rgb_distance(rgb1, rgb2):
+    """두 RGB 값 사이의 유클리드 거리"""
+    return np.sqrt(np.sum((rgb1 - rgb2) ** 2))
+
+def assign_clusters_to_colors(cluster_centers):
+    """
+    클러스터 중심을 기준 색상에 1:1 매칭
+    헝가리안 알고리즘 사용 (중복 없는 최적 매칭)
+    """
+    n_clusters = len(cluster_centers)
+    color_names = list(REFERENCE_COLORS.keys())
     
-    # 흰색: 높은 밝기, 낮은 채도
-    if v > 0.75 and s < 0.25:
-        return 'white'
+    # 비용 행렬 생성 (거리 = 비용)
+    cost_matrix = np.zeros((n_clusters, len(color_names)))
     
-    # 노란색: Hue 40-70
-    if 40 <= h <= 70 and v > 0.55:
-        return 'yellow'
+    for i, cluster_center in enumerate(cluster_centers):
+        for j, color_name in enumerate(color_names):
+            ref_rgb = REFERENCE_COLORS[color_name]
+            cost_matrix[i, j] = rgb_distance(cluster_center, ref_rgb)
     
-    # 주황색: Hue 10-40
-    if 10 <= h <= 40:
-        return 'orange'
+    # 헝가리안 알고리즘으로 최적 매칭
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
     
-    # 빨간색: Hue 0-10 or 350-360
-    if (h < 10 or h > 350):
-        return 'red'
+    # 매칭 결과
+    cluster_to_color = {}
+    for cluster_id, color_id in zip(row_ind, col_ind):
+        cluster_to_color[cluster_id] = color_names[color_id]
     
-    # 초록색: Hue 70-160
-    if 70 <= h <= 160:
-        return 'green'
-    
-    # 파란색: Hue 180-260
-    if 180 <= h <= 260:
-        return 'blue'
-    
-    return 'unknown'
+    return cluster_to_color
 
 def extract_rgb_from_cell(img_array, row, col, sample_ratio=0.4):
     """단일 셀에서 RGB 추출"""
@@ -77,7 +66,7 @@ def extract_rgb_from_cell(img_array, row, col, sample_ratio=0.4):
     
     return avg_color, (start_x, start_y, sample_width, sample_height)
 
-def visualize_with_clusters(img_array, colors, cluster_labels, output_path):
+def visualize_with_clusters(img_array, colors, cluster_labels, cluster_to_color, output_path):
     """클러스터 결과를 시각화"""
     height, width = img_array.shape[:2]
     cell_height = height // 3
@@ -177,12 +166,12 @@ def perspective_transform(image, pts):
     return warped
 
 # ============= 전체 파이프라인 =============
-def process_cube_with_kmeans(input_folder='uploaded_images', 
-                             output_square_folder='cube_square',
-                             output_vis_folder='cube_visualization',
-                             output_file='cube_colors.txt',
-                             size=800):
-    """K-means 기반 루빅스 큐브 색상 인식"""
+def process_cube_with_reference_matching(input_folder='uploaded_images', 
+                                        output_square_folder='cube_square',
+                                        output_vis_folder='cube_visualization',
+                                        output_file='cube_colors.txt',
+                                        size=800):
+    """기준 RGB 매칭 기반 루빅스 큐브 색상 인식"""
     
     # 출력 폴더 생성
     for folder in [output_square_folder, output_vis_folder]:
@@ -200,15 +189,21 @@ def process_cube_with_kmeans(input_folder='uploaded_images',
         return
     
     print(f"=" * 60)
-    print(f"K-means 기반 루빅스 큐브 색상 인식")
+    print(f"기준 RGB 매칭 기반 루빅스 큐브 색상 인식")
     print(f"총 {len(image_files)}개의 이미지를 처리합니다.")
     print(f"=" * 60)
+    print()
+    
+    print("기준 RGB 값:")
+    for color_name, rgb in REFERENCE_COLORS.items():
+        print(f"  {color_name:7s}: RGB{tuple(rgb)}")
     print()
     
     # Phase 1: 모든 이미지 처리 및 RGB 수집
     all_rgb_values = []
     all_images_data = []
     
+    print("=" * 60)
     print("Phase 1: 배경 제거 및 RGB 값 수집")
     print("-" * 60)
     
@@ -284,17 +279,19 @@ def process_cube_with_kmeans(input_folder='uploaded_images',
             
         except Exception as e:
             print(f"  ✗ 오류: {e}\n")
+            import traceback
+            traceback.print_exc()
             continue
     
     # Phase 2: K-means 클러스터링
-    print("\n" + "=" * 60)
+    print("=" * 60)
     print("Phase 2: K-means 클러스터링 (54개 칸 → 6개 그룹)")
     print("-" * 60)
     
     all_rgb_array = np.array(all_rgb_values)
     print(f"총 {len(all_rgb_array)}개 칸의 RGB 데이터 수집 완료")
     
-    # K-means 실행 (k=6, 루빅스 큐브 색상 6개)
+    # K-means 실행 (k=6)
     kmeans = KMeans(n_clusters=6, random_state=42, n_init=10)
     kmeans.fit(all_rgb_array)
     
@@ -302,18 +299,28 @@ def process_cube_with_kmeans(input_folder='uploaded_images',
     all_labels = kmeans.labels_
     
     print(f"\nK-means 클러스터링 완료!")
-    print(f"\n클러스터 중심 색상:")
-    
-    # 각 클러스터의 색상 이름 판단
-    cluster_color_names = {}
+    print(f"\n클러스터 중심 RGB:")
     for i, center in enumerate(cluster_centers):
-        color_name = get_color_name_from_cluster_center(center)
-        cluster_color_names[i] = color_name
-        print(f"  클러스터 {i}: RGB{center.astype(int)} → {color_name}")
+        print(f"  클러스터 {i}: RGB{tuple(center.astype(int))}")
     
-    # Phase 3: 결과 시각화 및 저장
+    # Phase 3: 클러스터를 기준 색상에 매칭
     print("\n" + "=" * 60)
-    print("Phase 3: 결과 시각화 및 저장")
+    print("Phase 3: 클러스터 → 기준 색상 1:1 매칭")
+    print("-" * 60)
+    
+    cluster_to_color = assign_clusters_to_colors(cluster_centers)
+    
+    print("\n매칭 결과:")
+    for cluster_id in sorted(cluster_to_color.keys()):
+        color_name = cluster_to_color[cluster_id]
+        center_rgb = cluster_centers[cluster_id].astype(int)
+        ref_rgb = REFERENCE_COLORS[color_name].astype(int)
+        distance = rgb_distance(cluster_centers[cluster_id], REFERENCE_COLORS[color_name])
+        print(f"  클러스터 {cluster_id} RGB{tuple(center_rgb)} → {color_name:7s} (기준: RGB{tuple(ref_rgb)}, 거리: {distance:.1f})")
+    
+    # Phase 4: 결과 시각화 및 저장
+    print("\n" + "=" * 60)
+    print("Phase 4: 결과 시각화 및 저장")
     print("-" * 60)
     
     results = []
@@ -333,19 +340,18 @@ def process_cube_with_kmeans(input_folder='uploaded_images',
             row_colors = []
             for col in range(3):
                 cluster_id = image_labels[row][col]
-                color_name = cluster_color_names[cluster_id]
+                color_name = cluster_to_color[cluster_id]
                 row_colors.append(color_name)
             colors.append(row_colors)
         
         # 시각화
         vis_filename = f"vis_{filename}"
         vis_path = os.path.join(output_vis_folder, vis_filename)
-        visualize_with_clusters(square_array, colors, image_labels, vis_path)
+        visualize_with_clusters(square_array, colors, image_labels, cluster_to_color, vis_path)
         
-        print(f"{filename}:")
+        print(f"\n{filename}:")
         for row in colors:
             print(f"  {' '.join(row)}")
-        print()
         
         results.append({
             'filename': filename,
@@ -360,16 +366,16 @@ def process_cube_with_kmeans(input_folder='uploaded_images',
                 f.write(f"{' '.join(row)}\n")
             f.write("\n")
     
-    print("=" * 60)
+    print("\n" + "=" * 60)
     print(f"모든 처리 완료!")
     print(f"- 정사각형 이미지: '{output_square_folder}' 폴더")
-    print(f"- 시각화 이미지: '{output_vis_folder}' 폴더 (클러스터 번호 포함)")
+    print(f"- 시각화 이미지: '{output_vis_folder}' 폴더")
     print(f"- 색상 데이터: '{output_file}' 파일")
     print(f"=" * 60)
 
 
 if __name__ == "__main__":
-    process_cube_with_kmeans(
+    process_cube_with_reference_matching(
         input_folder='uploaded_images',
         output_square_folder='cube_square',
         output_vis_folder='cube_visualization',
