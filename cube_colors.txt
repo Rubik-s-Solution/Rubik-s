@@ -1,0 +1,60 @@
+cube_01.jpg
+green blue blue
+green green blue
+blue red green
+
+cube_02.jpg
+green blue blue
+green green blue
+blue red green
+
+cube_03.jpg
+green orange blue
+green red blue
+green orange green
+
+cube_04.jpg
+green orange blue
+green red blue
+green orange green
+
+cube_05.jpg
+red green red
+blue blue green
+orange blue red
+
+cube_06.jpg
+red green red
+blue blue green
+orange blue red
+
+cube_07.jpg
+blue blue blue
+green green blue
+orange orange blue
+
+cube_08.jpg
+blue blue blue
+green green blue
+orange orange blue
+
+cube_09.jpg
+red green orange
+green blue green
+green orange blue
+
+cube_10.jpg
+red green orange
+green blue green
+green orange blue
+
+cube_11.jpg
+green blue orange
+red orange red
+green red blue
+
+cube_12.jpg
+green blue orange
+red orange red
+green red blue
+

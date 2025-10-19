@@ -1,78 +1,195 @@
 import os
 from rembg import remove
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 import cv2
 import glob
+from sklearn.cluster import KMeans
 
-def order_points(pts):
-    """
-    4개의 점을 좌상, 우상, 우하, 좌하 순서로 정렬
-    """
-    rect = np.zeros((4, 2), dtype="float32")
+# ============= K-means 기반 색상 인식 =============
+def rgb_to_hsv(rgb):
+    """RGB를 HSV로 변환"""
+    r, g, b = rgb / 255.0
+    max_val = max(r, g, b)
+    min_val = min(r, g, b)
+    diff = max_val - min_val
     
-    # 좌상: 합이 가장 작음, 우하: 합이 가장 큼
+    v = max_val
+    s = 0 if max_val == 0 else diff / max_val
+    
+    if diff == 0:
+        h = 0
+    elif max_val == r:
+        h = 60 * (((g - b) / diff) % 6)
+    elif max_val == g:
+        h = 60 * (((b - r) / diff) + 2)
+    else:
+        h = 60 * (((r - g) / diff) + 4)
+    
+    return h, s, v
+
+def get_color_name_from_cluster_center(rgb):
+    """클러스터 중심 RGB로 색상 이름 판단"""
+    h, s, v = rgb_to_hsv(rgb)
+    
+    # 흰색: 높은 밝기, 낮은 채도
+    if v > 0.75 and s < 0.25:
+        return 'white'
+    
+    # 노란색: Hue 40-70
+    if 40 <= h <= 70 and v > 0.55:
+        return 'yellow'
+    
+    # 주황색: Hue 10-40
+    if 10 <= h <= 40:
+        return 'orange'
+    
+    # 빨간색: Hue 0-10 or 350-360
+    if (h < 10 or h > 350):
+        return 'red'
+    
+    # 초록색: Hue 70-160
+    if 70 <= h <= 160:
+        return 'green'
+    
+    # 파란색: Hue 180-260
+    if 180 <= h <= 260:
+        return 'blue'
+    
+    return 'unknown'
+
+def extract_rgb_from_cell(img_array, row, col, sample_ratio=0.4):
+    """단일 셀에서 RGB 추출"""
+    height, width = img_array.shape[:2]
+    cell_height = height // 3
+    cell_width = width // 3
+    
+    cell_y = row * cell_height
+    cell_x = col * cell_width
+    
+    sample_height = int(cell_height * sample_ratio)
+    sample_width = int(cell_width * sample_ratio)
+    start_y = cell_y + (cell_height - sample_height) // 2
+    start_x = cell_x + (cell_width - sample_width) // 2
+    
+    sample_region = img_array[start_y:start_y+sample_height, start_x:start_x+sample_width]
+    avg_color = np.mean(sample_region, axis=(0, 1))[:3]
+    
+    return avg_color, (start_x, start_y, sample_width, sample_height)
+
+def visualize_with_clusters(img_array, colors, cluster_labels, output_path):
+    """클러스터 결과를 시각화"""
+    height, width = img_array.shape[:2]
+    cell_height = height // 3
+    cell_width = width // 3
+    
+    vis_img = Image.fromarray(img_array)
+    draw = ImageDraw.Draw(vis_img)
+    
+    font_size = int(min(cell_height, cell_width) * 0.12)
+    try:
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except:
+        font = ImageFont.load_default()
+    
+    sample_ratio = 0.4
+    
+    for row in range(3):
+        for col in range(3):
+            cell_y = row * cell_height
+            cell_x = col * cell_width
+            
+            sample_height = int(cell_height * sample_ratio)
+            sample_width = int(cell_width * sample_ratio)
+            start_y = cell_y + (cell_height - sample_height) // 2
+            start_x = cell_x + (cell_width - sample_width) // 2
+            
+            # 샘플링 영역 표시
+            draw.rectangle(
+                [start_x, start_y, start_x + sample_width, start_y + sample_height],
+                outline='red', width=3
+            )
+            
+            # 색상 이름 + 클러스터 번호
+            color_name = colors[row][col]
+            cluster_num = cluster_labels[row][col]
+            text = f"{color_name}\n[{cluster_num}]"
+            
+            # 텍스트 위치
+            bbox = draw.textbbox((0, 0), color_name, font=font)
+            text_width = bbox[2] - bbox[0]
+            text_height = bbox[3] - bbox[1]
+            text_x = cell_x + (cell_width - text_width) // 2
+            text_y = cell_y + cell_height - text_height * 2 - 15
+            
+            # 배경
+            padding = 5
+            draw.rectangle(
+                [text_x - padding, text_y - padding, 
+                 text_x + text_width + padding, text_y + text_height * 2 + padding],
+                fill='black'
+            )
+            
+            # 텍스트
+            draw.text((text_x, text_y), color_name, fill='white', font=font)
+            draw.text((text_x, text_y + text_height), f"[{cluster_num}]", fill='yellow', font=font)
+    
+    # 그리드 선
+    for i in range(1, 3):
+        draw.line([(i * cell_width, 0), (i * cell_width, height)], fill='lime', width=3)
+        draw.line([(0, i * cell_height), (width, i * cell_height)], fill='lime', width=3)
+    
+    vis_img.save(output_path, quality=95)
+
+# ============= Perspective 변환 함수 =============
+def order_points(pts):
+    rect = np.zeros((4, 2), dtype="float32")
     s = pts.sum(axis=1)
     rect[0] = pts[np.argmin(s)]
     rect[2] = pts[np.argmax(s)]
-    
-    # 우상: 차이가 가장 작음, 좌하: 차이가 가장 큼
     diff = np.diff(pts, axis=1)
     rect[1] = pts[np.argmin(diff)]
     rect[3] = pts[np.argmax(diff)]
-    
     return rect
 
 def perspective_transform(image, pts):
-    """
-    4개의 점을 기준으로 perspective 변환
-    """
     rect = order_points(pts)
     (tl, tr, br, bl) = rect
     
-    # 너비 계산
     widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
     widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
     maxWidth = max(int(widthA), int(widthB))
     
-    # 높이 계산
     heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
     heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
     maxHeight = max(int(heightA), int(heightB))
     
-    # 정사각형으로 만들기
     size = max(maxWidth, maxHeight)
     
-    # 목표 좌표
     dst = np.array([
         [0, 0],
         [size - 1, 0],
         [size - 1, size - 1],
         [0, size - 1]], dtype="float32")
     
-    # perspective 변환 행렬 계산
     M = cv2.getPerspectiveTransform(rect, dst)
     warped = cv2.warpPerspective(image, M, (size, size))
-    
     return warped
 
-def process_cube_images(input_folder='uploaded_images', output_folder='cube_square', 
-                        bg_color=(255, 255, 255), size=800):
-    """
-    루빅스 큐브 이미지를 배경 제거 → perspective 보정 → 정사각형 변환하여 저장합니다.
+# ============= 전체 파이프라인 =============
+def process_cube_with_kmeans(input_folder='uploaded_images', 
+                             output_square_folder='cube_square',
+                             output_vis_folder='cube_visualization',
+                             output_file='cube_colors.txt',
+                             size=800):
+    """K-means 기반 루빅스 큐브 색상 인식"""
     
-    Parameters:
-    - input_folder: 원본 이미지가 있는 폴더
-    - output_folder: 처리된 이미지를 저장할 폴더
-    - bg_color: 배경색 (R, G, B) 튜플
-    - size: 출력 이미지 크기 (정사각형, 픽셀)
-    """
+    # 출력 폴더 생성
+    for folder in [output_square_folder, output_vis_folder]:
+        if not os.path.exists(folder):
+            os.makedirs(folder)
     
-    # 출력 폴더가 없으면 생성
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-    
-    # 이미지 파일 목록 가져오기
+    # 이미지 파일 찾기
     image_extensions = ['*.jpg', '*.jpeg', '*.png', '*.JPG', '*.JPEG', '*.PNG']
     image_files = []
     for ext in image_extensions:
@@ -82,118 +199,180 @@ def process_cube_images(input_folder='uploaded_images', output_folder='cube_squa
         print(f"'{input_folder}' 폴더에서 이미지를 찾을 수 없습니다.")
         return
     
-    print(f"총 {len(image_files)}개의 이미지를 처리합니다...")
-    print(f"배경색: RGB{bg_color}")
-    print(f"출력 크기: {size}x{size} 픽셀\n")
+    print(f"=" * 60)
+    print(f"K-means 기반 루빅스 큐브 색상 인식")
+    print(f"총 {len(image_files)}개의 이미지를 처리합니다.")
+    print(f"=" * 60)
+    print()
     
-    # 각 이미지 처리
+    # Phase 1: 모든 이미지 처리 및 RGB 수집
+    all_rgb_values = []
+    all_images_data = []
+    
+    print("Phase 1: 배경 제거 및 RGB 값 수집")
+    print("-" * 60)
+    
     for idx, image_path in enumerate(sorted(image_files), 1):
+        filename = os.path.basename(image_path)
+        print(f"[{idx}/{len(image_files)}] {filename}")
+        
         try:
-            filename = os.path.basename(image_path)
-            print(f"처리 중 ({idx}/{len(image_files)}): {filename}")
-            
-            # 1단계: 이미지 열기
+            # 배경 제거 및 전처리
             input_image = Image.open(image_path)
-            print(f"  - 원본 크기: {input_image.size}")
-            
-            # 2단계: 배경 제거
-            print(f"  - 배경 제거 중...")
             output_image = remove(input_image)
-            
-            # RGBA 모드 확인
             if output_image.mode != 'RGBA':
                 output_image = output_image.convert('RGBA')
             
-            # 3단계: OpenCV 형식으로 변환
             img_array = np.array(output_image)
-            
-            # 4단계: 알파 채널을 사용해 마스크 생성
             alpha = img_array[:, :, 3]
             
-            # 5단계: 큐브의 외곽선 찾기
-            # 이진화
             _, binary = cv2.threshold(alpha, 10, 255, cv2.THRESH_BINARY)
-            
-            # 컨투어 찾기
             contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             if not contours:
-                print(f"  ⚠ 건너뜀: 큐브를 찾을 수 없습니다.\n")
+                print(f"  ✗ 큐브를 찾을 수 없습니다.\n")
                 continue
             
-            # 가장 큰 컨투어 선택
             largest_contour = max(contours, key=cv2.contourArea)
-            
-            # 6단계: 사각형 근사
             epsilon = 0.02 * cv2.arcLength(largest_contour, True)
             approx = cv2.approxPolyDP(largest_contour, epsilon, True)
             
-            # 7단계: perspective 변환
             if len(approx) >= 4:
-                # 4개의 점 선택 (가장 큰 사각형)
                 hull = cv2.convexHull(largest_contour)
                 epsilon2 = 0.02 * cv2.arcLength(hull, True)
                 approx = cv2.approxPolyDP(hull, epsilon2, True)
                 
-                # 4개의 코너 점 찾기
                 if len(approx) >= 4:
-                    # 가장 바깥쪽 4개 점 찾기
                     rect = cv2.minAreaRect(largest_contour)
                     box = cv2.boxPoints(rect)
                     box = box.astype(int)
-                    
-                    # perspective 변환 적용
                     warped = perspective_transform(img_array, box.astype("float32"))
-                    
-                    print(f"  - Perspective 보정 완료")
                 else:
-                    # 사각형을 찾지 못한 경우 bounding box 사용
                     x, y, w, h = cv2.boundingRect(largest_contour)
                     warped = img_array[y:y+h, x:x+w]
-                    print(f"  - Bounding box로 크롭")
             else:
-                # 컨투어가 충분하지 않으면 bounding box 사용
                 x, y, w, h = cv2.boundingRect(largest_contour)
                 warped = img_array[y:y+h, x:x+w]
-                print(f"  - Bounding box로 크롭")
             
-            # 8단계: PIL Image로 변환
             warped_pil = Image.fromarray(warped)
-            
-            # 9단계: 정사각형으로 리사이즈
             warped_pil = warped_pil.resize((size, size), Image.Resampling.LANCZOS)
-            
-            # 10단계: RGB 배경에 붙여넣기
-            square_img = Image.new('RGB', (size, size), bg_color)
+            square_img = Image.new('RGB', (size, size), (255, 255, 255))
             square_img.paste(warped_pil, (0, 0), warped_pil if warped_pil.mode == 'RGBA' else None)
             
-            # 11단계: 파일명 생성 및 저장
-            output_filename = f"cube_{idx:02d}.jpg"
-            output_path = os.path.join(output_folder, output_filename)
-            square_img.save(output_path, 'JPEG', quality=95)
+            # 정사각형 이미지 저장
+            square_filename = f"cube_{idx:02d}.jpg"
+            square_path = os.path.join(output_square_folder, square_filename)
+            square_img.save(square_path, 'JPEG', quality=95)
             
-            print(f"  ✓ 저장 완료: {output_filename}\n")
+            # RGB 값 수집
+            square_array = np.array(square_img)
+            rgb_grid = []
+            
+            for row in range(3):
+                for col in range(3):
+                    rgb, _ = extract_rgb_from_cell(square_array, row, col)
+                    rgb_grid.append(rgb)
+                    all_rgb_values.append(rgb)
+            
+            all_images_data.append({
+                'filename': square_filename,
+                'array': square_array,
+                'rgb_grid': rgb_grid
+            })
+            
+            print(f"  ✓ RGB 수집 완료 (9개 칸)\n")
             
         except Exception as e:
-            print(f"  ✗ 오류 발생 ({filename}): {str(e)}\n")
-            import traceback
-            traceback.print_exc()
+            print(f"  ✗ 오류: {e}\n")
             continue
     
-    print(f"\n모든 이미지 처리 완료!")
-    print(f"결과는 '{output_folder}' 폴더에 저장되었습니다.")
+    # Phase 2: K-means 클러스터링
+    print("\n" + "=" * 60)
+    print("Phase 2: K-means 클러스터링 (54개 칸 → 6개 그룹)")
+    print("-" * 60)
+    
+    all_rgb_array = np.array(all_rgb_values)
+    print(f"총 {len(all_rgb_array)}개 칸의 RGB 데이터 수집 완료")
+    
+    # K-means 실행 (k=6, 루빅스 큐브 색상 6개)
+    kmeans = KMeans(n_clusters=6, random_state=42, n_init=10)
+    kmeans.fit(all_rgb_array)
+    
+    cluster_centers = kmeans.cluster_centers_
+    all_labels = kmeans.labels_
+    
+    print(f"\nK-means 클러스터링 완료!")
+    print(f"\n클러스터 중심 색상:")
+    
+    # 각 클러스터의 색상 이름 판단
+    cluster_color_names = {}
+    for i, center in enumerate(cluster_centers):
+        color_name = get_color_name_from_cluster_center(center)
+        cluster_color_names[i] = color_name
+        print(f"  클러스터 {i}: RGB{center.astype(int)} → {color_name}")
+    
+    # Phase 3: 결과 시각화 및 저장
+    print("\n" + "=" * 60)
+    print("Phase 3: 결과 시각화 및 저장")
+    print("-" * 60)
+    
+    results = []
+    label_idx = 0
+    
+    for img_data in all_images_data:
+        filename = img_data['filename']
+        square_array = img_data['array']
+        
+        # 이 이미지의 9개 칸에 대한 레이블
+        image_labels = all_labels[label_idx:label_idx+9].reshape(3, 3)
+        label_idx += 9
+        
+        # 색상 이름 매핑
+        colors = []
+        for row in range(3):
+            row_colors = []
+            for col in range(3):
+                cluster_id = image_labels[row][col]
+                color_name = cluster_color_names[cluster_id]
+                row_colors.append(color_name)
+            colors.append(row_colors)
+        
+        # 시각화
+        vis_filename = f"vis_{filename}"
+        vis_path = os.path.join(output_vis_folder, vis_filename)
+        visualize_with_clusters(square_array, colors, image_labels, vis_path)
+        
+        print(f"{filename}:")
+        for row in colors:
+            print(f"  {' '.join(row)}")
+        print()
+        
+        results.append({
+            'filename': filename,
+            'colors': colors
+        })
+    
+    # 텍스트 파일 저장
+    with open(output_file, 'w', encoding='utf-8') as f:
+        for result in results:
+            f.write(f"{result['filename']}\n")
+            for row in result['colors']:
+                f.write(f"{' '.join(row)}\n")
+            f.write("\n")
+    
+    print("=" * 60)
+    print(f"모든 처리 완료!")
+    print(f"- 정사각형 이미지: '{output_square_folder}' 폴더")
+    print(f"- 시각화 이미지: '{output_vis_folder}' 폴더 (클러스터 번호 포함)")
+    print(f"- 색상 데이터: '{output_file}' 파일")
+    print(f"=" * 60)
 
 
 if __name__ == "__main__":
-    # uploaded_images 폴더의 모든 이미지를 처리
-    # 배경 제거 → perspective 보정 → 정면으로 펴기 → 정사각형 저장
-    
-    process_cube_images(
-        input_folder='uploaded_images',   # 원본 이미지 폴더
-        output_folder='cube_square',      # 결과 저장 폴더
-        bg_color=(255, 255, 255),         # 흰색 배경
-        size=800                          # 800x800 픽셀
+    process_cube_with_kmeans(
+        input_folder='uploaded_images',
+        output_square_folder='cube_square',
+        output_vis_folder='cube_visualization',
+        output_file='cube_colors.txt',
+        size=800
     )
-    
-    # 필요한 라이브러리:
-    # pip install rembg pillow opencv-python numpy
