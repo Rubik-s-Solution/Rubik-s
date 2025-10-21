@@ -7,7 +7,7 @@ from typing import List, Optional, Dict
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -21,13 +21,22 @@ from PIL import Image
 import json
 import cv2
 import numpy as np
+from sklearn.cluster import KMeans
+from scipy.optimize import linear_sum_assignment
+
+try:
+    from rembg import remove
+    HAS_REMBG = True
+except ImportError:
+    HAS_REMBG = False
+    print("경고: rembg 라이브러리가 설치되지 않았습니다. 배경 제거 없이 진행됩니다.")
 
 app = FastAPI(title="Rubik's Cube Image API", version="1.0.0")
 
 # CORS 설정 (프론트엔드와 통신을 위해)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],  # Vite 기본 포트
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,6 +48,35 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 # 정적 파일 서빙 (업로드된 이미지에 접근하기 위해)
 app.mount("/images", StaticFiles(directory=UPLOAD_DIR), name="images")
+
+# 세션 관리
+SESSIONS = {}  # {session_id: {"created_at": datetime, "images": {...}}}
+
+def get_session_id(request=None) -> str:
+    """요청에서 세션 ID 가져오기 또는 새로 생성"""
+    # 헤더에서 세션 ID 확인
+    if request and hasattr(request, 'headers'):
+        session_id = request.headers.get('X-Session-Id')
+        if session_id and session_id in SESSIONS:
+            return session_id
+    
+    # 새 세션 생성
+    session_id = str(uuid.uuid4())
+    SESSIONS[session_id] = {
+        "created_at": datetime.now(),
+        "images": {}
+    }
+    return session_id
+
+def get_session_upload_dir(session_id: str) -> Path:
+    """세션별 업로드 디렉토리 반환"""
+    session_dir = UPLOAD_DIR / session_id
+    session_dir.mkdir(exist_ok=True)
+    return session_dir
+
+def validate_session(session_id: str) -> bool:
+    """세션 ID 유효성 확인"""
+    return session_id in SESSIONS
 
 # 큐브 면 정보
 CUBE_FACES = ["U", "D", "F", "B", "L", "R"]
@@ -87,22 +125,87 @@ async def main():
         "message": "Rubik's Cube Image Upload API",
         "version": "1.0.0",
         "endpoints": {
+            "create_session": "/create-session",
+            "delete_session": "/delete-session",
             "upload": "/upload-image",
-            "images": "/images/{filename}",
+            "images": "/images/{session_id}/{filename}",
             "cube_images": "/cube-images",
+            "analyze": "/analyze-cube-images",
             "health": "/health"
         }
     }
 
+@app.post("/create-session")
+async def create_session():
+    """새로운 세션 생성"""
+    session_id = str(uuid.uuid4())
+    SESSIONS[session_id] = {
+        "created_at": datetime.now(),
+        "images": {}
+    }
+    
+    # 세션 디렉토리 생성
+    session_dir = get_session_upload_dir(session_id)
+    
+    return {
+        "success": True,
+        "session_id": session_id,
+        "message": "세션이 생성되었습니다.",
+        "created_at": SESSIONS[session_id]["created_at"].isoformat()
+    }
+
+@app.delete("/delete-session")
+async def delete_session(request: Request):
+    """
+    세션 삭제 및 관련 파일 정리
+    세션 ID는 X-Session-Id 헤더로 전달
+    """
+    # 헤더에서 세션 ID 가져오기
+    session_id = request.headers.get('X-Session-Id')
+    if not session_id:
+        raise HTTPException(status_code=400, detail="X-Session-Id 헤더가 필요합니다.")
+    
+    if session_id not in SESSIONS:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
+    
+    # 세션 디렉토리 삭제
+    session_dir = UPLOAD_DIR / session_id
+    if session_dir.exists():
+        import shutil
+        shutil.rmtree(session_dir)
+    
+    # 세션 정보 삭제
+    del SESSIONS[session_id]
+    
+    return {
+        "success": True,
+        "message": "세션이 삭제되었습니다."
+    }
+
 @app.post("/upload-image")
 async def upload_image(
+    request: Request,
     face: str = Form(..., description="큐브 면 (U, D, F, B, L, R)"),
     file: UploadFile = File(..., description="업로드할 이미지 파일")
 ):
     """
-    큐브의 특정 면에 이미지 업로드
+    큐브의 특정 면에 이미지 업로드 (세션별 분리)
+    세션 ID는 X-Session-Id 헤더로 전달
     """
     try:
+        # 헤더에서 세션 ID 가져오기
+        session_id = request.headers.get('X-Session-Id')
+        if not session_id:
+            raise HTTPException(status_code=400, detail="X-Session-Id 헤더가 필요합니다.")
+        
+        # 세션 유효성 검사 - 없으면 새로 생성
+        if not validate_session(session_id):
+            print(f"세션 {session_id}가 존재하지 않습니다. 새로 생성합니다.")
+            SESSIONS[session_id] = {
+                "created_at": datetime.now(),
+                "images": {}
+            }
+        
         # 유효성 검사
         validate_cube_face(face)
         validate_image_file(file)
@@ -125,15 +228,18 @@ async def upload_image(
                 detail="유효하지 않은 이미지 파일입니다."
             )
         
-        # 고유한 파일명 생성 (파일명이 None이 아님을 이미 확인했음)
+        # 고유한 파일명 생성
         if file.filename is None:
             raise HTTPException(status_code=400, detail="파일 이름이 없습니다.")
         
         file_extension = Path(file.filename).suffix.lower()
         unique_filename = f"{face}_{uuid.uuid4().hex}{file_extension}"
-        file_path = UPLOAD_DIR / unique_filename
         
-        # 파일 저장 (aiofiles가 없는 경우 동기 방식 사용)
+        # 세션별 디렉토리에 저장
+        session_dir = get_session_upload_dir(session_id)
+        file_path = session_dir / unique_filename
+        
+        # 파일 저장
         if HAS_AIOFILES:
             async with aiofiles.open(file_path, 'wb') as f:  # type: ignore
                 await f.write(content)
@@ -149,11 +255,12 @@ async def upload_image(
             "file_size": len(content),
             "content_type": file.content_type,
             "upload_time": datetime.now().isoformat(),
-            "image_url": f"/images/{unique_filename}"
+            "image_url": f"/images/{session_id}/{unique_filename}",
+            "session_id": session_id
         }
         
         # 메타데이터 파일 저장
-        metadata_path = UPLOAD_DIR / f"{unique_filename}.json"
+        metadata_path = session_dir / f"{unique_filename}.json"
         if HAS_AIOFILES:
             async with aiofiles.open(metadata_path, 'w', encoding='utf-8') as f:  # type: ignore
                 await f.write(json.dumps(metadata, ensure_ascii=False, indent=2))
@@ -161,12 +268,16 @@ async def upload_image(
             with open(metadata_path, 'w', encoding='utf-8') as f:
                 f.write(json.dumps(metadata, ensure_ascii=False, indent=2))
         
+        # 세션에 이미지 정보 추가
+        SESSIONS[session_id]["images"][face] = metadata
+        
         return JSONResponse(
             status_code=200,
             content={
                 "success": True,
                 "message": f"{face} 면에 이미지가 성공적으로 업로드되었습니다.",
-                "data": metadata
+                "data": metadata,
+                "session_id": session_id
             }
         )
         
@@ -179,40 +290,36 @@ async def upload_image(
         )
 
 @app.get("/cube-images")
-async def get_cube_images():
+async def get_cube_images(request: Request):
     """
-    업로드된 모든 큐브 이미지 정보 조회
+    특정 세션의 업로드된 모든 큐브 이미지 정보 조회
+    세션 ID는 X-Session-Id 헤더로 전달
     """
     try:
-        images_info = {}
+        # 헤더에서 세션 ID 가져오기
+        session_id = request.headers.get('X-Session-Id')
+        if not session_id:
+            raise HTTPException(status_code=400, detail="X-Session-Id 헤더가 필요합니다.")
         
-        # 메타데이터 파일들을 읽어서 정보 수집
-        for metadata_file in UPLOAD_DIR.glob("*.json"):
-            try:
-                if HAS_AIOFILES:
-                    async with aiofiles.open(metadata_file, 'r', encoding='utf-8') as f:  # type: ignore
-                        content = await f.read()
-                else:
-                    with open(metadata_file, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                        
-                metadata = json.loads(content)
-                face = metadata.get("face")
-                if face:
-                    images_info[face] = metadata
-            except Exception as e:
-                print(f"메타데이터 파일 읽기 실패 {metadata_file}: {e}")
-                continue
+        # 세션 유효성 검사
+        if not validate_session(session_id):
+            raise HTTPException(status_code=404, detail="유효하지 않은 세션입니다.")
+        
+        # 세션 데이터에서 직접 가져오기
+        images_info = SESSIONS[session_id]["images"]
         
         return JSONResponse(
             status_code=200,
             content={
                 "success": True,
                 "message": "큐브 이미지 정보를 성공적으로 조회했습니다.",
+                "session_id": session_id,
                 "data": images_info
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -220,54 +327,25 @@ async def get_cube_images():
         )
 
 @app.delete("/cube-images/{face}")
-async def delete_cube_image(face: str):
+async def delete_cube_image(request: Request, face: str):
     """
-    특정 면의 이미지 삭제
+    특정 세션의 특정 면 이미지 삭제
+    세션 ID는 X-Session-Id 헤더로 전달
     """
     try:
+        # 헤더에서 세션 ID 가져오기
+        session_id = request.headers.get('X-Session-Id')
+        if not session_id:
+            raise HTTPException(status_code=400, detail="X-Session-Id 헤더가 필요합니다.")
+        
+        # 세션 유효성 검사
+        if not validate_session(session_id):
+            raise HTTPException(status_code=404, detail="유효하지 않은 세션입니다.")
+        
         validate_cube_face(face)
         
-        deleted_files = []
-        
-        # 해당 면의 이미지와 메타데이터 파일 찾기 및 삭제
-        for file_path in UPLOAD_DIR.iterdir():
-            if file_path.is_file():
-                # 메타데이터 파일인 경우
-                if file_path.suffix == '.json':
-                    try:
-                        if HAS_AIOFILES:
-                            async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:  # type: ignore
-                                content = await f.read()
-                        else:
-                            with open(file_path, 'r', encoding='utf-8') as f:
-                                content = f.read()
-                                
-                        metadata = json.loads(content)
-                        if metadata.get("face") == face:
-                                # 해당 이미지 파일도 삭제
-                                image_file = UPLOAD_DIR / metadata.get("saved_filename", "")
-                                if image_file.exists():
-                                    os.remove(image_file)
-                                    deleted_files.append(str(image_file))
-                                
-                                # 메타데이터 파일 삭제
-                                os.remove(file_path)
-                                deleted_files.append(str(file_path))
-                                break
-                    except Exception as e:
-                        print(f"메타데이터 파일 처리 실패 {file_path}: {e}")
-                        continue
-        
-        if deleted_files:
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "success": True,
-                    "message": f"{face} 면의 이미지가 성공적으로 삭제되었습니다.",
-                    "deleted_files": deleted_files
-                }
-            )
-        else:
+        # 세션 데이터에서 이미지 정보 확인
+        if face not in SESSIONS[session_id]["images"]:
             return JSONResponse(
                 status_code=404,
                 content={
@@ -275,6 +353,35 @@ async def delete_cube_image(face: str):
                     "message": f"{face} 면에 업로드된 이미지가 없습니다."
                 }
             )
+        
+        metadata = SESSIONS[session_id]["images"][face]
+        session_dir = get_session_upload_dir(session_id)
+        deleted_files = []
+        
+        # 이미지 파일 삭제
+        image_file = session_dir / metadata["saved_filename"]
+        if image_file.exists():
+            os.remove(image_file)
+            deleted_files.append(str(image_file))
+        
+        # 메타데이터 파일 삭제
+        metadata_file = session_dir / f"{metadata['saved_filename']}.json"
+        if metadata_file.exists():
+            os.remove(metadata_file)
+            deleted_files.append(str(metadata_file))
+        
+        # 세션 데이터에서 제거
+        del SESSIONS[session_id]["images"][face]
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "message": f"{face} 면의 이미지가 성공적으로 삭제되었습니다.",
+                "deleted_files": deleted_files,
+                "session_id": session_id
+            }
+        )
         
     except HTTPException:
         raise
@@ -296,234 +403,217 @@ async def health_check():
         "upload_dir_exists": UPLOAD_DIR.exists()
     }
 
-# ==================== 색상 분석 함수들 (test.py에서 가져옴) ====================
+# ==================== K-means 클러스터링 기반 색상 분석 (remove_bg.py에서 가져옴) ====================
 
-def order_quad(pts):
-    """사각형 4점을 TL, TR, BR, BL 순서로 정렬"""
+# 기준 RGB 값 정의
+REFERENCE_COLORS = {
+    'white':  np.array([255, 255, 255]),  # 흰색
+    'yellow': np.array([255, 255, 0]),    # 노란색
+    'orange': np.array([255, 165, 0]),    # 주황색
+    'red':    np.array([180, 0, 0]),      # 빨간색
+    'green':  np.array([0, 155, 0]),      # 초록색
+    'blue':   np.array([0, 0, 255])       # 파란색
+}
+
+def rgb_distance(rgb1, rgb2):
+    """두 RGB 값 사이의 유클리드 거리"""
+    return np.sqrt(np.sum((rgb1 - rgb2) ** 2))
+
+def assign_clusters_to_colors(cluster_centers):
+    """
+    클러스터 중심을 기준 색상에 1:1 매칭
+    헝가리안 알고리즘 사용 (중복 없는 최적 매칭)
+    """
+    n_clusters = len(cluster_centers)
+    color_names = list(REFERENCE_COLORS.keys())
+    
+    # 비용 행렬 생성 (거리 = 비용)
+    cost_matrix = np.zeros((n_clusters, len(color_names)))
+    
+    for i, cluster_center in enumerate(cluster_centers):
+        for j, color_name in enumerate(color_names):
+            ref_rgb = REFERENCE_COLORS[color_name]
+            cost_matrix[i, j] = rgb_distance(cluster_center, ref_rgb)
+    
+    # 헝가리안 알고리즘으로 최적 매칭
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    
+    # 매칭 결과
+    cluster_to_color = {}
+    for cluster_id, color_id in zip(row_ind, col_ind):
+        cluster_to_color[cluster_id] = color_names[color_id]
+    
+    return cluster_to_color
+
+def extract_rgb_from_cell(img_array, row, col, sample_ratio=0.4):
+    """단일 셀에서 RGB 추출"""
+    height, width = img_array.shape[:2]
+    cell_height = height // 3
+    cell_width = width // 3
+    
+    cell_y = row * cell_height
+    cell_x = col * cell_width
+    
+    sample_height = int(cell_height * sample_ratio)
+    sample_width = int(cell_width * sample_ratio)
+    start_y = cell_y + (cell_height - sample_height) // 2
+    start_x = cell_x + (cell_width - sample_width) // 2
+    
+    sample_region = img_array[start_y:start_y+sample_height, start_x:start_x+sample_width]
+    avg_color = np.mean(sample_region, axis=(0, 1))[:3]
+    
+    return avg_color
+
+def order_points(pts):
+    """Perspective 변환을 위한 4점 정렬"""
+    rect = np.zeros((4, 2), dtype="float32")
     s = pts.sum(axis=1)
-    d = np.diff(pts, axis=1).reshape(-1)
-    out = np.zeros((4, 2), dtype=np.float32)
-    out[0] = pts[np.argmin(s)]  # TL
-    out[2] = pts[np.argmax(s)]  # BR
-    out[1] = pts[np.argmin(d)]  # TR
-    out[3] = pts[np.argmax(d)]  # BL
-    return out
+    rect[0] = pts[np.argmin(s)]
+    rect[2] = pts[np.argmax(s)]
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]
+    rect[3] = pts[np.argmax(diff)]
+    return rect
 
-def detect_face_quad(bgr):
-    """면 외곽 검출"""
-    h, w = bgr.shape[:2]
-    scale = 1400 / max(h, w) if max(h, w) > 1400 else 1.0
-    small = cv2.resize(bgr, (int(w*scale), int(h*scale)),
-                       interpolation=cv2.INTER_AREA) if scale != 1.0 else bgr.copy()
+def perspective_transform(image, pts):
+    """Perspective 변환으로 면 정사각형 만들기"""
+    rect = order_points(pts)
+    (tl, tr, br, bl) = rect
+    
+    widthA = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
+    widthB = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
+    maxWidth = max(int(widthA), int(widthB))
+    
+    heightA = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
+    heightB = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
+    maxHeight = max(int(heightA), int(heightB))
+    
+    size = max(maxWidth, maxHeight)
+    
+    dst = np.array([
+        [0, 0],
+        [size - 1, 0],
+        [size - 1, size - 1],
+        [0, size - 1]], dtype="float32")
+    
+    M = cv2.getPerspectiveTransform(rect, dst)
+    warped = cv2.warpPerspective(image, M, (size, size))
+    return warped
 
-    hs, ws = small.shape[:2]
-
-    # 색/화이트 마스크 경로
-    hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
-    H, S, V = cv2.split(hsv)
-    mask_color = ((S > 60) & (V > 80)).astype(np.uint8) * 255
-    mask_white = ((S < 55) & (V > 190)).astype(np.uint8) * 255
-    mask = cv2.bitwise_or(mask_color, mask_white)
-    k = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k, 1)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, 2)
-
-    cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cands = []
-    for c in cnts:
-        a = cv2.contourArea(c)
-        if a < 0.0006 * hs * ws or a > 0.35 * hs * ws:
-            continue
-        (cx, cy), (rw, rh), _ = cv2.minAreaRect(c)
-        if min(rw, rh) == 0:
-            continue
-        if max(rw, rh) / min(rw, rh) > 2.0:
-            continue
-        cands.append((a, c))
-
-    if cands:
-        cands = sorted(cands, key=lambda x: x[0], reverse=True)[:12]
-        pts = np.vstack([c.reshape(-1, 2) for _, c in cands]).astype(np.float32)
-        hull = cv2.convexHull(pts)
-        peri = cv2.arcLength(hull, True)
-        approx = cv2.approxPolyDP(hull, 0.02 * peri, True)
-        if len(approx) != 4:
-            rect = cv2.minAreaRect(hull)
-            box = cv2.boxPoints(rect)
-            approx = box.reshape(-1, 1, 2).astype(np.float32)
-        quad = (approx.reshape(-1, 2) * (1 / scale)).astype(np.float32)
-        return order_quad(quad)
-
-    # 에지 기반 보조
-    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 60, 180)
-    edges = cv2.dilate(edges, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)), 1)
-    cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    best = None
-    best_score = -1
-    for c in cnts:
-        a = cv2.contourArea(c)
-        if a < 0.002 * hs * ws:
-            continue
-        peri = cv2.arcLength(c, True)
-        approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-        if len(approx) != 4:
-            continue
-        rect = approx.reshape(-1, 2)
-        x, y, w2, h2 = cv2.boundingRect(rect)
-        ar = w2 / h2 if h2 > 0 else 0
-        if 0.6 < ar < 1.4:
-            score = a
-            if score > best_score:
-                best_score = score
-                best = rect.astype(np.float32)
-
-    if best is not None:
-        quad = (best * (1 / scale)).astype(np.float32)
-        return order_quad(quad)
-
-    return None
-
-def classify_face_adaptive(hsv_list):
-    """적응형 색상 분류"""
-    Hs = np.array([h for h, _, _ in hsv_list], dtype=float)
-    Ss = np.array([s for _, s, _ in hsv_list], dtype=float)
-    Vs = np.array([v for _, _, v in hsv_list], dtype=float)
-
-    s_thr = np.percentile(Ss, 30) + 10
-    v_thr = max(np.percentile(Vs, 75) - 5, 165)
-
-    labels = ["?"] * 9
-    white_cand = (Ss < s_thr) & (Vs > v_thr)
-
-    for i, (h, s, v) in enumerate(hsv_list):
-        if 90 <= h <= 135:  # blue
-            if v > 80:
-                white_cand[i] = False
-        if 37 <= h <= 90:  # green
-            if v > 80:
-                white_cand[i] = False
-        if (h <= 10 or h >= 170) or (10 < h < 40):
-            if s > 40:
-                white_cand[i] = False
-
-    for i in np.where(white_cand)[0]:
-        labels[i] = "w"
-
-    def hue2label(h, s, v):
-        if 10 < h <= 25 and s > 45 and v > 70:
-            return "o"
-        if 25 < h <= 37 and s > 45 and v > 70:
-            return "y"
-        if 37 < h <= 90 and s > 35 and v > 60:
-            return "g"
-        if 90 < h <= 135 and s > 30 and v > 60:
-            return "b"
-        if (h <= 10 or h >= 170) and s > 35 and v > 55:
-            return "r"
-        return "?"
-
-    for i in range(9):
-        if labels[i] == "?":
-            labels[i] = hue2label(*hsv_list[i])
-
-    canon = {"r": 0, "o": 17, "y": 31, "g": 60, "b": 110}
-    if labels[4] in canon:
-        c = labels[4]
-        for i in range(9):
-            if labels[i] == "?":
-                labels[i] = c if Ss[i] > (s_thr * 0.8) else "w"
+def detect_cube_contour(image_array):
+    """이미지에서 큐브 윤곽 검출"""
+    # 그레이스케일 변환
+    if len(image_array.shape) == 3:
+        gray = cv2.cvtColor(image_array, cv2.COLOR_BGR2GRAY)
     else:
-        for i in range(9):
-            if labels[i] == "?":
-                h = Hs[i]
-                best = min(canon.items(), key=lambda kv: min(abs(h - kv[1]), 180 - abs(h - kv[1])))[0]
-                labels[i] = best
-    return labels
+        gray = image_array
+    
+    # 이진화
+    _, binary = cv2.threshold(gray, 50, 255, cv2.THRESH_BINARY)
+    
+    # 윤곽 검출
+    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    if not contours:
+        return None
+    
+    # 가장 큰 윤곽 선택
+    largest_contour = max(contours, key=cv2.contourArea)
+    
+    # 윤곽 근사화
+    epsilon = 0.02 * cv2.arcLength(largest_contour, True)
+    approx = cv2.approxPolyDP(largest_contour, epsilon, True)
+    
+    if len(approx) >= 4:
+        hull = cv2.convexHull(largest_contour)
+        epsilon2 = 0.02 * cv2.arcLength(hull, True)
+        approx = cv2.approxPolyDP(hull, epsilon2, True)
+        
+        if len(approx) >= 4:
+            rect = cv2.minAreaRect(largest_contour)
+            box = cv2.boxPoints(rect)
+            return box.astype("float32")
+    
+    # 실패시 바운딩 박스 반환
+    x, y, w, h = cv2.boundingRect(largest_contour)
+    return np.array([
+        [x, y],
+        [x + w, y],
+        [x + w, y + h],
+        [x, y + h]
+    ], dtype="float32")
 
-def robust_cell_hsv(hsv_img, x1, y1, x2, y2, subgrid=3, subclip=0.6):
-    """셀 내부 멀티샘플 HSV"""
-    H, W = hsv_img.shape[:2]
-    x1 = max(0, x1)
-    y1 = max(0, y1)
-    x2 = min(W, x2)
-    y2 = min(H, y2)
-    gh = (y2 - y1) / subgrid
-    gw = (x2 - x1) / subgrid
+def preprocess_cube_image(image_path: Path, target_size=800, use_rembg=True):
+    """
+    큐브 이미지 전처리 및 정사각형 변환
+    
+    Args:
+        image_path: 이미지 파일 경로
+        target_size: 출력 이미지 크기
+        use_rembg: 배경 제거 사용 여부 (rembg 라이브러리 필요)
+    
+    Returns:
+        전처리된 이미지 배열 (RGB, target_size x target_size)
+    """
+    # 이미지 읽기
+    img = Image.open(image_path)
+    
+    # 배경 제거 (rembg 사용 가능 시)
+    if use_rembg and HAS_REMBG:
+        try:
+            img = remove(img)
+            if img.mode != 'RGBA':
+                img = img.convert('RGBA')
+            print(f"  배경 제거 완료: {image_path.name}")
+        except Exception as e:
+            print(f"  배경 제거 실패, 원본 사용: {e}")
+            if img.mode != 'RGBA':
+                img = img.convert('RGBA')
+    
+    # RGB 변환 및 윤곽 검출
+    if img.mode == 'RGBA':
+        # 알파 채널을 이용한 윤곽 검출
+        img_array = np.array(img)
+        alpha = img_array[:, :, 3]
+        
+        # 윤곽 검출
+        contour_pts = detect_cube_contour(alpha)
+        
+        if contour_pts is not None:
+            # Perspective 변환
+            warped = perspective_transform(img_array, contour_pts)
+            warped_pil = Image.fromarray(warped)
+        else:
+            warped_pil = img
+    else:
+        # RGB 이미지인 경우 그대로 사용
+        img_array = np.array(img.convert('RGB'))
+        contour_pts = detect_cube_contour(img_array)
+        
+        if contour_pts is not None:
+            warped = perspective_transform(img_array, contour_pts)
+            warped_pil = Image.fromarray(warped)
+        else:
+            warped_pil = img.convert('RGB')
+    
+    # 크기 조정
+    warped_pil = warped_pil.resize((target_size, target_size), Image.Resampling.LANCZOS)
+    
+    # RGB 배경에 붙이기
+    square_img = Image.new('RGB', (target_size, target_size), (255, 255, 255))
+    square_img.paste(warped_pil, (0, 0), warped_pil if warped_pil.mode == 'RGBA' else None)
+    
+    return np.array(square_img)
 
-    h_list, s_list, v_list = [], [], []
-    min_valid = max(3, int(0.4 * subgrid * subgrid))
-
-    for r in range(subgrid):
-        for c in range(subgrid):
-            sy1 = int(y1 + r * gh)
-            sy2 = int(y1 + (r + 1) * gh)
-            sx1 = int(x1 + c * gw)
-            sx2 = int(x1 + (c + 1) * gw)
-            my = int((1 - subclip) * (sy2 - sy1) / 2.0)
-            mx = int((1 - subclip) * (sx2 - sx1) / 2.0)
-            cy1, cy2 = sy1 + my, sy2 - my
-            cx1, cx2 = sx1 + mx, sx2 - mx
-            if cy2 <= cy1 or cx2 <= cx1:
-                continue
-
-            patch = hsv_img[cy1:cy2, cx1:cx2]
-            Hm = float(np.median(patch[:, :, 0]))
-            Sm = float(np.median(patch[:, :, 1]))
-            Vm = float(np.median(patch[:, :, 2]))
-
-            is_color_ok = (Sm > 25 and Vm > 50)
-            is_white_ok = (Sm < 35 and Vm > 160)
-
-            if is_color_ok or is_white_ok:
-                h_list.append(Hm)
-                s_list.append(Sm)
-                v_list.append(Vm)
-
-    if len(h_list) >= min_valid:
-        return float(np.median(h_list)), float(np.median(s_list)), float(np.median(v_list))
-
-    # 폴백: 셀 중앙 전체 패치
-    patch = hsv_img[y1:y2, x1:x2]
-    return float(np.median(patch[:, :, 0])), float(np.median(patch[:, :, 1])), float(np.median(patch[:, :, 2]))
-
-def analyze_face_colors(image_path: Path, size=300, patch_ratio=0.50, subgrid=3, subclip=0.6):
-    """단일 이미지에서 3x3 색상 추출"""
-    bgr = cv2.imread(str(image_path))
-    if bgr is None:
-        raise FileNotFoundError(f"이미지를 읽을 수 없습니다: {image_path}")
-
-    quad = detect_face_quad(bgr)
-    if quad is None:
-        raise RuntimeError(f"면 외곽 검출 실패: {image_path}")
-
-    dst = np.float32([[0, 0], [size - 1, 0], [size - 1, size - 1], [0, size - 1]])
-    M = cv2.getPerspectiveTransform(quad, dst)
-    warped = cv2.warpPerspective(bgr, M, (size, size))
-    hsv_img = cv2.cvtColor(warped, cv2.COLOR_BGR2HSV)
-
-    h_step = size // 3
-    w_step = size // 3
-    hsv_list, boxes = [], []
-
-    for r in range(3):
-        for c in range(3):
-            y1, y2 = r * h_step, (r + 1) * h_step
-            x1, x2 = c * w_step, (c + 1) * w_step
-            my = int((1 - patch_ratio) * (y2 - y1) / 2.0)
-            mx = int((1 - patch_ratio) * (x2 - x1) / 2.0)
-            cy1, cy2 = y1 + my, y2 - my
-            cx1, cx2 = x1 + mx, x2 - mx
-
-            hm, sm, vm = robust_cell_hsv(hsv_img, cx1, cy1, cx2, cy2, subgrid=subgrid, subclip=subclip)
-            hsv_list.append((hm, sm, vm))
-            boxes.append((cx1, cy1, cx2, cy2))
-
-    labels = classify_face_adaptive(hsv_list)
-    grid = [[labels[r * 3 + c] for c in range(3)] for r in range(3)]
-
-    return grid
+# 색상 레이블 매핑 (K-means 결과를 단일 문자로 변환)
+COLOR_LABEL_MAP = {
+    'white': 'w',
+    'yellow': 'y',
+    'orange': 'o',
+    'red': 'r',
+    'green': 'g',
+    'blue': 'b'
+}
 
 # 색상 레이블을 HEX 색상으로 변환
 COLOR_MAP = {
@@ -536,70 +626,150 @@ COLOR_MAP = {
 }
 
 @app.post("/analyze-cube-images")
-async def analyze_cube_images():
+async def analyze_cube_images(request: Request):
     """
-    업로드된 모든 큐브 이미지를 분석하여 색상 데이터 추출
+    특정 세션의 업로드된 모든 큐브 이미지를 K-means 클러스터링으로 분석하여 색상 데이터 추출
+    전체 큐브(54개 칸)를 한번에 분석하여 일관성 있는 색상 인식
+    세션 ID는 X-Session-Id 헤더로 전달
     """
     try:
-        # 업로드된 이미지 정보 가져오기
-        images_info = {}
-        for metadata_file in UPLOAD_DIR.glob("*.json"):
-            try:
-                if HAS_AIOFILES:
-                    async with aiofiles.open(metadata_file, 'r', encoding='utf-8') as f:  # type: ignore
-                        content = await f.read()
-                else:
-                    with open(metadata_file, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                        
-                metadata = json.loads(content)
-                face = metadata.get("face")
-                if face:
-                    images_info[face] = metadata
-            except Exception as e:
-                print(f"메타데이터 파일 읽기 실패 {metadata_file}: {e}")
-                continue
+        # 헤더에서 세션 ID 가져오기
+        session_id = request.headers.get('X-Session-Id')
+        if not session_id:
+            raise HTTPException(status_code=400, detail="X-Session-Id 헤더가 필요합니다.")
+        
+        # 세션 유효성 검사
+        if not validate_session(session_id):
+            raise HTTPException(status_code=404, detail="유효하지 않은 세션입니다.")
+        
+        # 세션 데이터에서 이미지 정보 가져오기
+        images_info = SESSIONS[session_id]["images"]
+        session_dir = get_session_upload_dir(session_id)
         
         if not images_info:
             return JSONResponse(
                 status_code=404,
                 content={
                     "success": False,
-                    "message": "분석할 이미지가 없습니다. 먼저 이미지를 업로드하세요."
+                    "message": "분석할 이미지가 없습니다. 먼저 이미지를 업로드하세요.",
+                    "session_id": session_id
                 }
             )
         
-        # 각 면의 색상 분석
-        cube_colors = {}
-        analysis_results = {}
+        # Phase 1: 모든 이미지 전처리 및 RGB 수집
+        all_rgb_values = []
+        all_images_data = []
         
-        for face, metadata in images_info.items():
-            image_path = UPLOAD_DIR / metadata["saved_filename"]
+        print(f"\n[세션 {session_id[:8]}...] Phase 1: {len(images_info)}개 이미지 전처리 시작")
+        
+        for face, metadata in sorted(images_info.items()):
+            image_path = session_dir / metadata["saved_filename"]
             
             try:
-                # 색상 분석
-                color_grid = analyze_face_colors(image_path)
-                cube_colors[face] = color_grid
+                # 이미지 전처리 (배경 제거 + Perspective 변환)
+                square_array = preprocess_cube_image(image_path)
                 
-                # 16진수 색상으로 변환
-                hex_grid = [[COLOR_MAP.get(cell, "#808080") for cell in row] for row in color_grid]
+                # 각 칸에서 RGB 추출
+                rgb_grid = []
+                for row in range(3):
+                    for col in range(3):
+                        rgb = extract_rgb_from_cell(square_array, row, col)
+                        rgb_grid.append(rgb)
+                        all_rgb_values.append(rgb)
                 
-                analysis_results[face] = {
-                    "colors": color_grid,
-                    "hex_colors": hex_grid,
-                    "status": "success"
-                }
+                all_images_data.append({
+                    'face': face,
+                    'array': square_array,
+                    'rgb_grid': rgb_grid
+                })
+                
+                print(f"  {face} 면: RGB 수집 완료 (9개 칸)")
                 
             except Exception as e:
-                analysis_results[face] = {
-                    "status": "error",
-                    "error": str(e)
-                }
+                print(f"  {face} 면 처리 실패: {e}")
+                continue
         
-        # 분석 결과 저장
-        result_path = UPLOAD_DIR / "analyzed_colors.json"
+        if len(all_rgb_values) < 54:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "message": f"충분한 데이터가 없습니다. {len(all_rgb_values)}개 칸 수집됨 (최소 54개 필요)",
+                    "session_id": session_id
+                }
+            )
+        
+        # Phase 2: K-means 클러스터링 (54개 칸 → 6개 그룹)
+        print(f"\nPhase 2: K-means 클러스터링 ({len(all_rgb_values)}개 칸 → 6개 그룹)")
+        
+        all_rgb_array = np.array(all_rgb_values)
+        kmeans = KMeans(n_clusters=6, random_state=42, n_init=10)
+        kmeans.fit(all_rgb_array)
+        
+        cluster_centers = kmeans.cluster_centers_
+        all_labels = kmeans.labels_
+        
+        print("K-means 클러스터링 완료!")
+        for i, center in enumerate(cluster_centers):
+            print(f"  클러스터 {i}: RGB{tuple(center.astype(int))}")
+        
+        # Phase 3: 클러스터를 기준 색상에 매칭 (헝가리안 알고리즘)
+        print("\nPhase 3: 클러스터 → 기준 색상 1:1 매칭")
+        
+        cluster_to_color = assign_clusters_to_colors(cluster_centers)
+        
+        print("매칭 결과:")
+        for cluster_id in sorted(cluster_to_color.keys()):
+            color_name = cluster_to_color[cluster_id]
+            center_rgb = cluster_centers[cluster_id].astype(int)
+            ref_rgb = REFERENCE_COLORS[color_name].astype(int)
+            distance = rgb_distance(cluster_centers[cluster_id], REFERENCE_COLORS[color_name])
+            print(f"  클러스터 {cluster_id} RGB{tuple(center_rgb)} → {color_name:7s} (거리: {distance:.1f})")
+        
+        # Phase 4: 각 면의 색상 결과 생성
+        print("\nPhase 4: 결과 생성")
+        
+        cube_colors = {}
+        analysis_results = {}
+        label_idx = 0
+        
+        for img_data in all_images_data:
+            face = img_data['face']
+            
+            # 이 면의 9개 칸에 대한 클러스터 레이블
+            image_labels = all_labels[label_idx:label_idx+9]
+            label_idx += 9
+            
+            # 색상 이름으로 변환 (full name → 단일 문자)
+            colors_full = [cluster_to_color[label] for label in image_labels]
+            colors = [COLOR_LABEL_MAP[c] for c in colors_full]
+            
+            # 3x3 그리드로 변환
+            color_grid = [[colors[r * 3 + c] for c in range(3)] for r in range(3)]
+            cube_colors[face] = color_grid
+            
+            # 16진수 색상으로 변환
+            hex_grid = [[COLOR_MAP.get(cell, "#808080") for cell in row] for row in color_grid]
+            
+            analysis_results[face] = {
+                "colors": color_grid,
+                "hex_colors": hex_grid,
+                "cluster_labels": image_labels.tolist(),
+                "status": "success"
+            }
+            
+            print(f"\n{face} 면:")
+            for row in color_grid:
+                print(f"  {' '.join(row)}")
+        
+        # 분석 결과 저장 (세션별 디렉토리에)
+        result_path = session_dir / "analyzed_colors.json"
         result_data = {
+            "session_id": session_id,
             "timestamp": datetime.now().isoformat(),
+            "method": "kmeans_clustering",
+            "cluster_centers": cluster_centers.tolist(),
+            "cluster_mapping": {str(k): v for k, v in cluster_to_color.items()},
             "cube_colors": cube_colors,
             "analysis_results": analysis_results
         }
@@ -615,16 +785,25 @@ async def analyze_cube_images():
             status_code=200,
             content={
                 "success": True,
-                "message": f"{len(cube_colors)}개 면의 색상 분석이 완료되었습니다.",
+                "message": f"{len(cube_colors)}개 면의 색상 분석이 완료되었습니다 (K-means 클러스터링)",
+                "session_id": session_id,
                 "data": {
                     "cube_colors": cube_colors,
                     "analysis_results": analysis_results,
+                    "cluster_info": {
+                        "centers": cluster_centers.tolist(),
+                        "mapping": {str(k): v for k, v in cluster_to_color.items()}
+                    },
                     "result_file": str(result_path)
                 }
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=f"이미지 분석 중 오류가 발생했습니다: {str(e)}"
