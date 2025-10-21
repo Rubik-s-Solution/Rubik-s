@@ -109,11 +109,13 @@ const getSessionHeaders = () => {
  */
 export const uploadImageToBackend = async (face, file) => {
   try {
-    // 세션 ID가 없으면 먼저 생성
+    // 첫 이미지 업로드 시 항상 새 세션 생성
     let sessionId = getSessionId()
     if (!sessionId) {
+      console.log('🆕 새 세션 생성 중...')
       const sessionResult = await createSession()
       sessionId = sessionResult.session_id
+      console.log(`✅ 새 세션 생성 완료: ${sessionId}`)
     }
 
     const formData = new FormData()
@@ -133,7 +135,7 @@ export const uploadImageToBackend = async (face, file) => {
     if (!response.ok) {
       // 세션이 유효하지 않은 경우 새로 생성하고 재시도
       if (result.detail && (result.detail.includes('유효하지 않은 세션') || result.detail.includes('X-Session-Id'))) {
-        console.log('세션이 만료되었습니다. 새 세션을 생성합니다...')
+        console.log('⚠️ 세션이 만료되었습니다. 새 세션을 생성합니다...')
         clearSessionId()
         const sessionResult = await createSession()
         sessionId = sessionResult.session_id
@@ -297,17 +299,31 @@ export const analyzeCubeImages = async () => {
 
 /**
  * 현재 큐브 상태로부터 해법 생성
- * @param {Object} cubeColors - 큐브 색상 데이터 (각 면의 3x3 그리드)
+ * @param {Object} cubeColors - (선택) 현재 큐브 색상 상태. 없으면 세션의 analyzed_colors 사용
  * @returns {Promise<Object>} - 해법 결과
  */
-export const generateSolution = async (cubeColors) => {
+export const generateSolution = async (cubeColors = null) => {
   try {
+    // 세션이 없으면 자동으로 생성 (수동 조작 모드)
+    let sessionId = getSessionId()
+    if (!sessionId) {
+      console.log('🆕 세션이 없습니다. 자동으로 세션 생성 중...')
+      const sessionResult = await createSession()
+      sessionId = sessionResult.session_id
+      console.log('✅ 세션 자동 생성 완료:', sessionId)
+    }
+
+    const headers = {
+      'X-Session-Id': sessionId,
+      'Content-Type': 'application/json'
+    }
+
+    const body = cubeColors ? JSON.stringify({ cube_colors: cubeColors }) : null
+
     const response = await fetch(`${API_BASE_URL}/generate-solution`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ cube_colors: cubeColors }),
+      headers: headers,
+      body: body
     })
 
     const result = await response.json()
