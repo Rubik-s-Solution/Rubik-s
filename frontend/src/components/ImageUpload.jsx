@@ -25,10 +25,9 @@ function ImageUpload({ onImageUpload, uploadedImages = {}, onAnalysisComplete })
   const [apiHealthy, setApiHealthy] = useState(false)
   const fileInputRef = useRef()
 
-  // 컴포넌트 마운트 시 백엔드 상태 확인 및 이미지 로드
+  // 컴포넌트 마운트 시 백엔드 상태 확인만 수행 (세션은 생성하지 않음)
   useEffect(() => {
     checkBackendHealth()
-    loadBackendImages()
   }, [])
 
   // 백엔드 API 상태 확인

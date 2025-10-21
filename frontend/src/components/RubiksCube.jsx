@@ -54,6 +54,37 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
             z === -1 ? COLORS.blue : COLORS.black     // Back (-Z)
           ]
           
+          // [1,1,0] 위치의 초기 색상 확인 (디버그)
+          if (x === 1 && y === 1 && z === 0) {
+            console.log('🔧 [초기화] [1,1,0] 생성:', {
+              position: [x, y, z],
+              faceColors: [
+                `R:${x === 1 ? 'red' : 'black'}`,
+                `L:${x === -1 ? 'orange' : 'black'}`,
+                `Top:${y === 1 ? 'white' : 'black'}`,
+                `Bottom:${y === -1 ? 'yellow' : 'black'}`,
+                `F:${z === 1 ? 'green' : 'black'}`,
+                `B:${z === -1 ? 'blue' : 'black'}`
+              ]
+            })
+          }
+          
+          // [1,0,1] 위치의 초기 색상 확인 (디버그)
+          if (x === 1 && y === 0 && z === 1) {
+            console.log('🔧 [초기화] [1,0,1] 생성:', {
+              position: [x, y, z],
+              faceColors: [
+                `R:${x === 1 ? 'red' : 'black'}`,
+                `L:${x === -1 ? 'orange' : 'black'}`,
+                `Top:${y === 1 ? 'white' : 'black'}`,
+                `Bottom:${y === -1 ? 'yellow' : 'black'}`,
+                `F:${z === 1 ? 'green' : 'black'}`,
+                `B:${z === -1 ? 'blue' : 'black'}`
+              ],
+              expected: '[R:red, L:black, Top:black, Bottom:black, F:green, B:black]'
+            })
+          }
+          
           pieceArray.push({
             id: `${x}_${y}_${z}`,
             position: [x, y, z],
@@ -178,53 +209,62 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
   }
 
   // 면 색상 회전 함수
+  // faceColors = [Right(0), Left(1), Up(2), Down(3), Front(4), Back(5)]
   const rotateFaceColors = (colors, axis, direction) => {
     const newColors = [...colors]
     
     if (axis === 'x') {
-      // X축 회전: Top, Front, Bottom, Back 순환
-      if (direction === 1) { // 시계방향
-        const temp = newColors[2] // Top
-        newColors[2] = newColors[5] // Top = Back
-        newColors[5] = newColors[3] // Back = Bottom  
-        newColors[3] = newColors[4] // Bottom = Front
-        newColors[4] = temp // Front = Top
+      // X축 회전 (R/L 면): Up ↔ Front ↔ Down ↔ Back 순환
+      if (direction === 1) { // 시계방향 (오른쪽에서 봤을 때)
+        // U → F → D → B → U
+        const temp = newColors[2] // Up
+        newColors[2] = newColors[5] // Up = Back
+        newColors[5] = newColors[3] // Back = Down
+        newColors[3] = newColors[4] // Down = Front
+        newColors[4] = temp // Front = Up
       } else { // 반시계방향
-        const temp = newColors[2] // Top
-        newColors[2] = newColors[4] // Top = Front
-        newColors[4] = newColors[3] // Front = Bottom
-        newColors[3] = newColors[5] // Bottom = Back
-        newColors[5] = temp // Back = Top
+        // U → B → D → F → U
+        const temp = newColors[2] // Up
+        newColors[2] = newColors[4] // Up = Front
+        newColors[4] = newColors[3] // Front = Down
+        newColors[3] = newColors[5] // Down = Back
+        newColors[5] = temp // Back = Up
       }
     } else if (axis === 'y') {
-      // Y축 회전: Right, Front, Left, Back 순환
-      if (direction === 1) { // 시계방향
-        const temp = newColors[0] // Right
-        newColors[0] = newColors[4] // Right = Front
+      // Y축 회전 (U/D 면): Front ↔ Right ↔ Back ↔ Left 순환  
+      if (direction === 1) { // 시계방향 (위에서 봤을 때)
+        // F → R → B → L → F
+        const temp = newColors[4] // Front
         newColors[4] = newColors[1] // Front = Left
         newColors[1] = newColors[5] // Left = Back
-        newColors[5] = temp // Back = Right
+        newColors[5] = newColors[0] // Back = Right
+        newColors[0] = temp // Right = Front
       } else { // 반시계방향
-        const temp = newColors[0] // Right
+        // F → L → B → R → F
+        const temp = newColors[4] // Front
+        newColors[4] = newColors[0] // Front = Right
         newColors[0] = newColors[5] // Right = Back
         newColors[5] = newColors[1] // Back = Left
-        newColors[1] = newColors[4] // Left = Front
-        newColors[4] = temp // Front = Right
+        newColors[1] = temp // Left = Front
       }
     } else if (axis === 'z') {
-      // Z축 회전: Right, Top, Left, Bottom 순환
-      if (direction === 1) { // 시계방향
+      // Z축 회전 (F/B 면): Up ↔ Right ↔ Down ↔ Left 순환
+      // 위치 회전: R → U → L → D (direction=1)
+      // 따라서 색상도 같은 방향: R → U → L → D
+      if (direction === 1) { // 시계방향 (앞에서 봤을 때)
+        // R → U → L → D → R
         const temp = newColors[0] // Right
-        newColors[0] = newColors[3] // Right = Bottom
-        newColors[3] = newColors[1] // Bottom = Left
-        newColors[1] = newColors[2] // Left = Top
-        newColors[2] = temp // Top = Right
+        newColors[0] = newColors[3] // Right = Down
+        newColors[3] = newColors[1] // Down = Left
+        newColors[1] = newColors[2] // Left = Up
+        newColors[2] = temp // Up = Right
       } else { // 반시계방향
+        // R → D → L → U → R
         const temp = newColors[0] // Right
-        newColors[0] = newColors[2] // Right = Top
-        newColors[2] = newColors[1] // Top = Left
-        newColors[1] = newColors[3] // Left = Bottom
-        newColors[3] = temp // Bottom = Right
+        newColors[0] = newColors[2] // Right = Up
+        newColors[2] = newColors[1] // Up = Left
+        newColors[1] = newColors[3] // Left = Down
+        newColors[3] = temp // Down = Right
       }
     }
     
@@ -259,6 +299,20 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
             if (rotationState.activeGroup.includes(piece.id)) {
               const newPosition = rotatePosition(piece.position, rotationState.axis, rotationState.direction)
               const newFaceColors = rotateFaceColors(piece.faceColors, rotationState.axis, rotationState.direction)
+              
+              // F면 엣지 조각들 디버깅 (z=1이고 엣지인 조각들)
+              const [x, y, z] = piece.position
+              if (z === 1 && (Math.abs(x) === 1 || Math.abs(y) === 1) && !(Math.abs(x) === 1 && Math.abs(y) === 1)) {
+                const colorNames = ['R', 'L', 'U', 'D', 'F', 'B']
+                const oldColors = piece.faceColors.map((c, i) => `${colorNames[i]}:${c.toString(16)}`)
+                const newColors = newFaceColors.map((c, i) => `${colorNames[i]}:${c.toString(16)}`)
+                console.log(`🔧 [${x},${y},${z}] → [${newPosition}] 회전:`, {
+                  face: rotationState.face,
+                  oldColors: oldColors.join(', '),
+                  newColors: newColors.join(', ')
+                })
+              }
+              
               return {
                 ...piece,
                 position: newPosition,
@@ -329,12 +383,12 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
       const isShift = event.shiftKey
       
       const keyMap = {
-        'r': () => addRotation('R', isShift ? 1 : -1),
-        'l': () => addRotation('L', isShift ? -1 : 1),
-        'u': () => addRotation('U', isShift ? 1 : -1),
-        'd': () => addRotation('D', isShift ? -1 : 1),
-        'f': () => addRotation('F', isShift ? 1 : -1),
-        'b': () => addRotation('B', isShift ? -1 : 1)
+        'r': () => addRotation('R', isShift ? -1 : 1),  // R: 시계방향, Shift+R: 반시계방향
+        'l': () => addRotation('L', isShift ? 1 : -1),  // L: 시계방향, Shift+L: 반시계방향
+        'u': () => addRotation('U', isShift ? -1 : 1),  // U: 시계방향, Shift+U: 반시계방향
+        'd': () => addRotation('D', isShift ? 1 : -1),  // D: 시계방향, Shift+D: 반시계방향
+        'f': () => addRotation('F', isShift ? -1 : 1),  // F: 시계방향, Shift+F: 반시계방향
+        'b': () => addRotation('B', isShift ? 1 : -1)   // B: 시계방향, Shift+B: 반시계방향
       }
       
       if (keyMap[key]) {
@@ -421,7 +475,24 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
   const reset = useCallback(() => {
     console.log('🔄 Reset 시작')
     setRotationQueue([])
-    setPieces(initialPieces)
+    // initialPieces를 깊은 복사하여 설정 (참조 공유 방지)
+    const resetPieces = initialPieces.map(piece => ({
+      ...piece,
+      position: [...piece.position],
+      faceColors: [...piece.faceColors]
+    }))
+    
+    // [1,0,1] 조각 확인
+    const piece_1_0_1 = resetPieces.find(p => p.position[0] === 1 && p.position[1] === 0 && p.position[2] === 1)
+    if (piece_1_0_1) {
+      console.log('🔧 Reset 후 [1,0,1] 조각:', {
+        position: piece_1_0_1.position,
+        faceColors: piece_1_0_1.faceColors,
+        expected: '[0xC41E3A(red), 0x212121(black), 0x212121(black), 0x212121(black), 0x9E60(green), 0x212121(black)]'
+      })
+    }
+    
+    setPieces(resetPieces)
     console.log('🔄 Reset 완료')
   }, [initialPieces])
 

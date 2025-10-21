@@ -7,9 +7,11 @@ import CubeNet from './components/CubeNet'
 import ViewModeSelector from './components/ViewModeSelector'
 import Resizer from './components/Resizer'
 import ColorPicker, { COLORS } from './components/ColorPicker'
-import ColorGuide from './components/ColorGuide'
 import ImageUpload from './components/ImageUpload'
+import SolutionViewer from './components/SolutionViewer'
 import { loadAndConvertCubeData } from './utils/cubeColorLoader'
+import { generateSolution, createSession, clearSessionId } from './utils/imageApi'
+import { parseMove } from './utils/cubeSolver'
 import './App.css'
 
 function App() {
@@ -24,6 +26,11 @@ function App() {
   const [jsonLoadSuccess, setJsonLoadSuccess] = useState(false)
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [uploadedImages, setUploadedImages] = useState({}) // 면별 업로드된 이미지
+  const [solution, setSolution] = useState(null) // 생성된 해법
+  const [showSolution, setShowSolution] = useState(false) // 해법 뷰어 표시
+  const [isGeneratingSolution, setIsGeneratingSolution] = useState(false) // 해법 생성 중
+  const [solutionError, setSolutionError] = useState(null) // 해법 생성 오류
+  const [initialCubeState, setInitialCubeState] = useState(null) // 해법 생성 시점의 큐브 상태
   const cubeRef = useRef()
   const fileInputRef = useRef()
 
@@ -298,7 +305,18 @@ function App() {
   }
 
   // 이미지 업로드 모드 토글
-  const handleImageUploadToggle = () => {
+  const handleImageUploadToggle = async () => {
+    if (!showImageUpload) {
+      // 이미지 업로드 모달을 열 때 새 세션 생성
+      try {
+        console.log('🔄 이미지 업로드 모달 열기: 새 세션 생성 중...')
+        await createSession()
+        console.log('✅ 새 세션 생성 완료')
+      } catch (error) {
+        console.error('세션 생성 실패:', error)
+        // 세션 생성 실패해도 모달은 열리도록 함
+      }
+    }
     setShowImageUpload(!showImageUpload)
   }
 
@@ -427,7 +445,156 @@ function App() {
       cubeRef.current.setPieces(updatedPieces)
       setCubeData(updatedPieces)
       
+      // 큐브 상태 저장 (해법 적용 전 상태)
+      setInitialCubeState(JSON.parse(JSON.stringify(updatedPieces)))
+      
       console.log('큐브에 색상이 성공적으로 적용되었습니다!')
+    }
+  }
+
+  // 해법 생성
+  const handleGenerateSolution = async () => {
+    setIsGeneratingSolution(true)
+    setSolutionError(null)
+    
+    try {
+      console.log('해법 생성 중...')
+      
+      // 세션이 없으면 생성 (수동 조작 모드용)
+      let sessionId = localStorage.getItem('rubiks_session_id')
+      if (!sessionId) {
+        console.log('🆕 세션이 없습니다. 수동 조작 모드용 세션 생성 중...')
+        await createSession()
+        console.log('✅ 수동 조작 모드용 세션 생성 완료')
+      }
+      
+      // 현재 3D 큐브 상태를 백엔드 형식으로 변환
+      let cubeColors = null
+      if (cubeRef.current && cubeRef.current.getPieces) {
+        const currentPieces = cubeRef.current.getPieces()
+        console.log('📦 현재 큐브 조각:', currentPieces.length, '개')
+        
+        // 해법 생성 시점의 큐브 상태 저장 (깊은 복사)
+        setInitialCubeState(currentPieces.map(piece => ({
+          ...piece,
+          position: [...piece.position],
+          faceColors: [...piece.faceColors]
+        })))
+        
+        // pieces를 백엔드 형식으로 변환
+        const { convertCubePiecesToJson } = await import('./utils/cubeColorLoader')
+        cubeColors = convertCubePiecesToJson(currentPieces)
+        console.log('🎨 변환된 큐브 색상:', cubeColors)
+      }
+      
+      const result = await generateSolution(cubeColors)
+      
+      if (result.success && result.data) {
+        setSolution(result.data)
+        setShowSolution(true)
+        console.log('✅ 해법 생성 완료:', result.data)
+      } else {
+        throw new Error(result.error || '해법 생성 실패')
+      }
+    } catch (error) {
+      console.error('해법 생성 오류:', error)
+      setSolutionError(error.message)
+      
+      setTimeout(() => {
+        setSolutionError(null)
+      }, 5000)
+    } finally {
+      setIsGeneratingSolution(false)
+    }
+  }
+
+  // 큐브에 이동 적용
+  const handleApplyMove = (face, rotation) => {
+    if (!cubeRef.current || !cubeRef.current.addRotation) {
+      console.error('큐브 참조가 없습니다.')
+      return
+    }
+
+    // rotation: 1(CW), -1(CCW), 2(180°)
+    // addRotation의 direction: -1(CW), 1(CCW)
+    // L, D, B 면은 반대쪽에서 보므로 방향 반전
+    let direction = rotation === -1 ? 1 : -1
+    
+    // L, D, B 면은 방향 반전
+    if (face === 'L' || face === 'D' || face === 'B') {
+      direction = -direction
+    }
+    
+    let rotations = Math.abs(rotation) === 2 ? 2 : 1
+
+    console.log(`🔄 이동 적용: ${face} ${rotation} (방향: ${direction}, 회전수: ${rotations})`)
+
+    // 첫 번째 회전
+    cubeRef.current.addRotation(face, direction, 500)
+    
+    // 180도 회전은 두 번
+    if (rotations === 2) {
+      setTimeout(() => {
+        cubeRef.current.addRotation(face, direction, 500)
+      }, 50)
+    }
+  }
+
+  // 모든 이동을 즉시 적용 (자동 해결)
+  const handleAutoSolve = () => {
+    if (!solution || !solution.moves) {
+      console.error('해법이 없습니다.')
+      return
+    }
+
+    if (!cubeRef.current || !cubeRef.current.addRotation) {
+      console.error('큐브 참조가 없습니다.')
+      return
+    }
+
+    console.log('⚡ 자동 해결 시작...', solution.moves.length, '개 이동')
+    
+    // 모든 이동을 큐에 추가 (빠른 속도로)
+    solution.moves.forEach((move) => {
+      const { face, rotation } = parseMove(move)
+      
+      // direction 계산
+      let direction = rotation === -1 ? 1 : -1
+      if (face === 'L' || face === 'D' || face === 'B') {
+        direction = -direction
+      }
+      
+      // 180도 회전 처리
+      if (Math.abs(rotation) === 2) {
+        cubeRef.current.addRotation(face, direction, 200) // 빠른 속도
+        cubeRef.current.addRotation(face, direction, 200)
+      } else {
+        cubeRef.current.addRotation(face, direction, 200) // 빠른 속도
+      }
+    })
+    
+    console.log('✅ 모든 이동이 큐에 추가되었습니다.')
+  }
+
+  // 큐브 리셋 (초기 상태로 복원)
+  const handleResetCube = () => {
+    if (cubeRef.current && cubeRef.current.reset) {
+      cubeRef.current.reset()
+      console.log('🔄 큐브가 초기 상태로 복원되었습니다.')
+    }
+  }
+
+  // SolutionViewer에서 사용하는 초기화 (섞인 상태로 복원)
+  const handleResetToScrambled = () => {
+    if (cubeRef.current && cubeRef.current.setPieces && initialCubeState) {
+      // 저장된 섞인 상태로 복원
+      const restoredPieces = initialCubeState.map(piece => ({
+        ...piece,
+        position: [...piece.position],
+        faceColors: [...piece.faceColors]
+      }))
+      cubeRef.current.setPieces(restoredPieces)
+      console.log('🔄 큐브가 섞인 초기 상태로 복원되었습니다.')
     }
   }
 
@@ -472,46 +639,6 @@ function App() {
         <Controls cubeRef={cubeRef} />
         <ViewModeSelector viewMode={viewMode} onViewModeChange={setViewMode} />
         
-        {/* JSON 큐브 색상 로드 버튼 */}
-        <div className="json-loader">
-          <div className="json-buttons">
-            <button 
-              onClick={handleLoadCubeColorsFromJson}
-              disabled={isLoadingJson}
-              className="load-json-btn"
-            >
-              {isLoadingJson ? '로딩 중...' : '기본 JSON 로드'}
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".json"
-              onChange={handleFileUpload}
-              disabled={isLoadingJson}
-              className="file-input"
-              id="json-file-input"
-            />
-            <label 
-              htmlFor="json-file-input" 
-              className={`file-input-label ${isLoadingJson ? 'disabled' : ''}`}
-            >
-              JSON 파일 업로드
-            </label>
-          </div>
-          {jsonLoadSuccess && (
-            <div className="json-success">
-              ✓ 색상 데이터가 성공적으로 로드되었습니다!
-            </div>
-          )}
-          {jsonLoadError && (
-            <div className="json-error">
-              ✗ 에러: {jsonLoadError}
-            </div>
-          )}
-        </div>
-        
-        <ColorGuide />
-        
         <ColorPicker 
           selectedColor={selectedColor}
           onColorSelect={handleColorSelect}
@@ -524,10 +651,34 @@ function App() {
         <button 
           className="image-upload-toggle"
           onClick={handleImageUploadToggle}
-          title="이미지 업로드"
+          title="이미지 업로드하여 큐브 색상 분석"
         >
           📷 이미지 업로드
         </button>
+        
+        {/* 해법 생성 버튼 */}
+        <button 
+          className="generate-solution-btn"
+          onClick={handleGenerateSolution}
+          disabled={isGeneratingSolution}
+          title="현재 큐브 상태로 해법 생성"
+        >
+          {isGeneratingSolution ? '⏳ 생성 중...' : '🎯 해법 생성'}
+        </button>
+        
+        {/* 사용 안내 */}
+        <div className="usage-hint">
+          💡 <strong>사용 방법:</strong> 
+          <br/>• 📷 이미지 업로드: 큐브 사진으로 자동 분석
+          <br/>• 🎨 색상 편집: 직접 색상 선택하여 큐브 설정
+          <br/>• 🎯 해법 생성: 설정된 큐브 상태로 해법 찾기
+        </div>
+        
+        {solutionError && (
+          <div className="solution-error">
+            ✗ 오류: {solutionError}
+          </div>
+        )}
       </div>
       
       <div className={`content-container view-${viewMode.toLowerCase()}`}>
@@ -625,10 +776,6 @@ function App() {
           />
         </div>
       </div>
-      
-      <div className="info">
-        <h1>큐브 컨트롤은 개선 예정</h1>
-      </div>
 
       {/* 이미지 업로드 모달 */}
       {showImageUpload && (
@@ -653,7 +800,24 @@ function App() {
         </div>
       )}
 
-      {/* 해법 뷰어 사이드 패널 (삭제됨 - 추후 재구현 예정) */}
+      {/* 해법 뷰어 사이드 패널 */}
+      {showSolution && solution && (
+        <div className="solution-panel">
+          <button 
+            className="solution-close"
+            onClick={() => setShowSolution(false)}
+            title="닫기"
+          >
+            ✕
+          </button>
+          <SolutionViewer
+            solution={solution.solution}
+            moves={solution.moves}
+            onApplyMove={handleApplyMove}
+            onReset={handleResetToScrambled}
+          />
+        </div>
+      )}
     </div>
   )
 }

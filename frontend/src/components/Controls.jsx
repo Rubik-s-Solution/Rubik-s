@@ -84,10 +84,6 @@ function Controls({ cubeRef }) {
         Reset
       </button>
       
-      <select defaultValue="3" disabled>
-        <option value="3">3x3</option>
-      </select>
-      
       <div className="keyboard-help">
         <div>키보드: R/L (좌우), U/D (상하), F/B (앞뒤) | Shift+키 = 반시계방향</div>
         <div>마우스: 좌클릭 = 시계방향, 우클릭 = 반시계방향</div>

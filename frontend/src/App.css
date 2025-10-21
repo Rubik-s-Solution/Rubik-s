@@ -573,25 +573,22 @@ html, body {
 
 /* 이미지 업로드 버튼 스타일 */
 .image-upload-toggle {
-  padding: 8px 16px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: none;
-  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #eee;
+  padding: 10px 20px;
+  border-radius: 5px;
   cursor: pointer;
   font-size: 14px;
-  font-weight: 500;
   transition: all 0.3s ease;
   display: flex;
   align-items: center;
   gap: 6px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
 .image-upload-toggle:hover {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
-  background: linear-gradient(135deg, #764ba2 0%, #667eea 100%);
+  background: rgba(255, 118, 0, 0.8);
+  border-color: #ff7600;
 }
 
 .image-upload-toggle:active {
@@ -756,5 +753,110 @@ html, body {
   
   .app:has(.solution-panel.open) .content-container {
     margin-right: 0;
+  }
+}
+
+/* 해법 생성 버튼 */
+.generate-solution-btn {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #eee;
+  padding: 10px 20px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+.generate-solution-btn:hover:not(:disabled) {
+  background: rgba(255, 118, 0, 0.8);
+  border-color: #ff7600;
+}
+
+.generate-solution-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.generate-solution-btn:disabled:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* 사용 안내 */
+.usage-hint {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #eee;
+  padding: 10px 15px;
+  border-radius: 5px;
+  font-size: 12px;
+  max-width: 350px;
+  line-height: 1.6;
+}
+
+.usage-hint strong {
+  color: #ff7600;
+}
+
+.solution-error {
+  background-color: #ff4444;
+  color: white;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  animation: fadeIn 0.3s ease;
+}
+
+/* 해법 뷰어 패널 */
+.solution-panel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 400px;
+  background: linear-gradient(180deg, #2a2a2a 0%, #1a1a1a 100%);
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.3);
+  z-index: 1000;
+  overflow-y: auto;
+  animation: slideInRight 0.3s ease;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.solution-close {
+  position: absolute;
+  top: 15px;
+  right: 15px;
+  width: 36px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 50%;
+  color: white;
+  font-size: 20px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.solution-close:hover {
+  background: rgba(255, 255, 255, 0.2);
+  transform: rotate(90deg);
+}
+
+@media (max-width: 768px) {
+  .solution-panel {
+    width: 100%;
   }
 }
