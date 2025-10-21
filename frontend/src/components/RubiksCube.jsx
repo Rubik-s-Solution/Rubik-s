@@ -3,7 +3,8 @@ import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import CubePiece from './CubePiece'
 
-const ROTATION_DURATION = 500
+const ROTATION_DURATION = 500 // 일반 회전 속도
+const SHUFFLE_ROTATION_DURATION = 150 // 셔플 회전 속도 (빠르게)
 
 // 색상 머티리얼 캐시
 const materialCache = new Map()
@@ -23,8 +24,8 @@ const getMaterial = (color) => {
 }
 
 const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColor, selectedCell, onFaceColorChange, onCellSelect }, ref) => {
-  // 26개의 큐브 조각 생성
-  const [pieces, setPieces] = useState(() => {
+  // 초기 큐브 상태 생성 (한 번만 계산)
+  const initialPieces = useMemo(() => {
     const COLORS = {
       red: 0xC41E3A,
       green: 0x009E60,
@@ -63,7 +64,10 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
     }
     
     return pieceArray
-  })
+  }, [])
+
+  // 26개의 큐브 조각 생성
+  const [pieces, setPieces] = useState(initialPieces)
 
   const [isRotating, setIsRotating] = useState(false)
   const [rotationQueue, setRotationQueue] = useState([])
@@ -75,7 +79,8 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
     direction: 1,
     startTime: 0,
     activeGroup: [],
-    face: null
+    face: null,
+    duration: ROTATION_DURATION // 회전 속도
   })
 
   // 회전 그룹 초기화
@@ -103,9 +108,12 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
   }, [pieces])
 
   // 회전 추가
-  const addRotation = useCallback((face, direction = 1) => {
+  const addRotation = useCallback((face, direction = 1, duration = ROTATION_DURATION) => {
+    console.log(`🔧 [RubiksCube] addRotation 호출: face=${face}, direction=${direction}, duration=${duration}ms, isRotating=${isRotating}`)
+    
     if (isRotating) {
-      setRotationQueue(prev => [...prev, { face, direction }])
+      console.log(`⏳ [RubiksCube] 회전 중이므로 큐에 추가: face=${face}`)
+      setRotationQueue(prev => [...prev, { face, direction, duration }])
       return
     }
     
@@ -115,6 +123,8 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
       'U': 'y', 'D': 'y', 
       'F': 'z', 'B': 'z'
     }
+    
+    console.log(`🎯 [RubiksCube] 회전 실행 시작: face=${face}, axis=${faceMap[face]}, direction=${direction}, pieces=${activePieces.length}개, duration=${duration}ms`)
     
     // 피벗 그룹 초기화
     if (pivotRef.current) {
@@ -126,7 +136,8 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
       direction,
       startTime: 0,
       activeGroup: activePieces.map(p => p.id),
-      face
+      face,
+      duration // 회전 속도 설정
     })
     
     setIsRotating(true)
@@ -231,7 +242,8 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
       }
       
       const elapsed = currentTime - rotationState.startTime
-      const progress = Math.min(elapsed / ROTATION_DURATION, 1)
+      const duration = rotationState.duration || ROTATION_DURATION // 동적 duration 사용
+      const progress = Math.min(elapsed / duration, 1)
       const easedProgress = easeInOutCubic(progress)
       
       const targetRotation = (Math.PI / 2) * rotationState.direction
@@ -266,16 +278,40 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
         })
         
         // 회전 상태 초기화
-        setRotationState({ axis: null, direction: 1, startTime: 0, activeGroup: [], face: null })
-        setIsRotating(false)
+        console.log(`✅ [RubiksCube] 회전 완료! 큐에 남은 회전: ${rotationQueue.length}개`)
         
-        // 다음 회전 처리
+        // 다음 회전 처리 - isRotating을 false로 설정하기 전에 다음 회전 체크
         if (rotationQueue.length > 0) {
           const nextRotation = rotationQueue[0]
           setRotationQueue(prev => prev.slice(1))
-          setTimeout(() => {
-            addRotation(nextRotation.face, nextRotation.direction)
-          }, 100)
+          console.log(`➡️ [RubiksCube] 다음 회전 즉시 실행: face=${nextRotation.face}, direction=${nextRotation.direction}, duration=${nextRotation.duration}ms`)
+          
+          // 다음 회전을 바로 시작 (isRotating은 계속 true 유지)
+          const nextActivePieces = selectPiecesForRotation(nextRotation.face)
+          const faceMap = {
+            'R': 'x', 'L': 'x',
+            'U': 'y', 'D': 'y', 
+            'F': 'z', 'B': 'z'
+          }
+          
+          // 피벗 리셋
+          if (pivotRef.current) {
+            pivotRef.current.rotation.set(0, 0, 0)
+          }
+          
+          setRotationState({
+            axis: faceMap[nextRotation.face],
+            direction: nextRotation.direction,
+            startTime: 0,
+            activeGroup: nextActivePieces.map(p => p.id),
+            face: nextRotation.face,
+            duration: nextRotation.duration
+          })
+          // isRotating은 true로 유지됨
+        } else {
+          console.log(`🏁 [RubiksCube] 모든 회전 완료!`)
+          setRotationState({ axis: null, direction: 1, startTime: 0, activeGroup: [], face: null, duration: ROTATION_DURATION })
+          setIsRotating(false)
         }
       } else {
         // 회전 진행
@@ -293,12 +329,12 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
       const isShift = event.shiftKey
       
       const keyMap = {
-        'r': () => addRotation('R', isShift ? -1 : 1),
-        'l': () => addRotation('L', isShift ? 1 : -1),
-        'u': () => addRotation('U', isShift ? -1 : 1),
-        'd': () => addRotation('D', isShift ? 1 : -1),
-        'f': () => addRotation('F', isShift ? -1 : 1),
-        'b': () => addRotation('B', isShift ? 1 : -1)
+        'r': () => addRotation('R', isShift ? 1 : -1),
+        'l': () => addRotation('L', isShift ? -1 : 1),
+        'u': () => addRotation('U', isShift ? 1 : -1),
+        'd': () => addRotation('D', isShift ? -1 : 1),
+        'f': () => addRotation('F', isShift ? 1 : -1),
+        'b': () => addRotation('B', isShift ? -1 : 1)
       }
       
       if (keyMap[key]) {
@@ -366,6 +402,34 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
     )
   }, [])
 
+  // Shuffle 함수 추가
+  const shuffle = useCallback(() => {
+    console.log('🎲 Shuffle 시작')
+    const moves = ['R', 'L', 'U', 'D', 'F', 'B']
+    const directions = [1, -1]
+    const shuffleCount = 20 // 20번 랜덤 회전
+    
+    for (let i = 0; i < shuffleCount; i++) {
+      const randomFace = moves[Math.floor(Math.random() * moves.length)]
+      const randomDirection = directions[Math.floor(Math.random() * directions.length)]
+      addRotation(randomFace, randomDirection, SHUFFLE_ROTATION_DURATION) // 빠른 속도로!
+    }
+    console.log(`🎲 ${shuffleCount}번 랜덤 회전 추가됨 (빠른 속도: ${SHUFFLE_ROTATION_DURATION}ms)`)
+  }, [addRotation])
+
+  // Reset 함수 추가
+  const reset = useCallback(() => {
+    console.log('🔄 Reset 시작')
+    setRotationQueue([])
+    setPieces(initialPieces)
+    console.log('🔄 Reset 완료')
+  }, [initialPieces])
+
+  // Undo 함수 (임시 - 나중에 구현)
+  const undo = useCallback(() => {
+    console.log('↩️ Undo (미구현)')
+  }, [])
+
   // ref 설정
   React.useImperativeHandle(ref, () => ({
     getPieces: () => pieces,
@@ -389,7 +453,11 @@ const RubiksCube = React.forwardRef(({ onDataUpdate, colorEditMode, selectedColo
       }
     },
     addRotation: addRotation,
-    updatePieceFaceColor: updatePieceFaceColor
+    updatePieceFaceColor: updatePieceFaceColor,
+    shuffle: shuffle,
+    reset: reset,
+    undo: undo,
+    get isMoving() { return isRotating || rotationQueue.length > 0 }
   }))
 
   return (

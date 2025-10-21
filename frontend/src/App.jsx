@@ -9,9 +9,7 @@ import Resizer from './components/Resizer'
 import ColorPicker, { COLORS } from './components/ColorPicker'
 import ColorGuide from './components/ColorGuide'
 import ImageUpload from './components/ImageUpload'
-import SolutionViewer from './components/SolutionViewer'
 import { loadAndConvertCubeData } from './utils/cubeColorLoader'
-import { generateSolution } from './utils/imageApi'
 import './App.css'
 
 function App() {
@@ -26,12 +24,52 @@ function App() {
   const [jsonLoadSuccess, setJsonLoadSuccess] = useState(false)
   const [showImageUpload, setShowImageUpload] = useState(false)
   const [uploadedImages, setUploadedImages] = useState({}) // 면별 업로드된 이미지
-  const [showSolution, setShowSolution] = useState(false)
-  const [solution, setSolution] = useState(null)
-  const [isGeneratingSolution, setIsGeneratingSolution] = useState(false)
-  const [savedCubeState, setSavedCubeState] = useState(null) // 해법 생성 시점의 큐브 상태
   const cubeRef = useRef()
   const fileInputRef = useRef()
+
+  // cubeRef를 window.rubiksCube에 연결
+  React.useEffect(() => {
+    if (cubeRef.current) {
+      window.rubiksCube = cubeRef.current
+      console.log('✅ window.rubiksCube 연결됨')
+    }
+    return () => {
+      window.rubiksCube = null
+    }
+  }, [])
+
+  // 큐브가 풀렸는지 확인하는 함수
+  const checkCubeSolved = (pieces) => {
+    if (!pieces || pieces.length !== 26) return false
+    
+    // 각 면이 단일 색상인지 확인
+    const faces = {
+      right: pieces.filter(p => p.position[0] === 1),   // x = 1
+      left: pieces.filter(p => p.position[0] === -1),   // x = -1
+      top: pieces.filter(p => p.position[1] === 1),     // y = 1
+      bottom: pieces.filter(p => p.position[1] === -1), // y = -1
+      front: pieces.filter(p => p.position[2] === 1),   // z = 1
+      back: pieces.filter(p => p.position[2] === -1)    // z = -1
+    }
+    
+    let solved = true
+    const faceNames = ['right', 'left', 'top', 'bottom', 'front', 'back']
+    const faceIndexMap = [0, 1, 2, 3, 4, 5] // R, L, U, D, F, B
+    
+    faceNames.forEach((faceName, idx) => {
+      const facePieces = faces[faceName]
+      if (facePieces.length > 0) {
+        const firstColor = facePieces[0].faceColors[faceIndexMap[idx]]
+        const allSameColor = facePieces.every(p => p.faceColors[faceIndexMap[idx]] === firstColor)
+        if (!allSameColor) {
+          console.log(`❌ ${faceName} 면이 풀리지 않음`)
+          solved = false
+        }
+      }
+    })
+    
+    return solved
+  }
 
   // 큐브 데이터 업데이트 핸들러
   const handleCubeDataUpdate = (pieces) => {
@@ -289,6 +327,12 @@ function App() {
   const handleAnalysisComplete = (cubeColors, analysisResults) => {
     console.log('색상 분석 완료:', cubeColors)
     
+    // analysisResults에 해법이 있으면 저장
+    if (analysisResults && analysisResults.solution && analysisResults.solution.status === 'success') {
+      console.log('✅ 기존 해법 발견:', analysisResults.solution.solution_string)
+      setSolution(analysisResults.solution.solution_string)
+    }
+    
     // test.py의 색상 레이블을 THREE.js 색상 번호로 변환
     const colorMap = {
       'w': 0xFFFFFF,  // white
@@ -348,12 +392,12 @@ function App() {
                 col = z + 1
               } else if (faceName === 'U' && y === 1) {
                 belongsToFace = true
-                row = 1 - z  // z: 1,0,-1 → row: 0,1,2
-                col = x + 1  // x: -1,0,1 → col: 0,1,2
+                row = z + 1   // z: -1,0,1 → row: 0,1,2
+                col = x + 1   // x: -1,0,1 → col: 0,1,2
               } else if (faceName === 'D' && y === -1) {
                 belongsToFace = true
-                row = z + 1
-                col = x + 1
+                row = 1 - z  // z: 1,0,-1 → row: 0,1,2
+                col = x + 1  // x: -1,0,1 → col: 0,1,2
               } else if (faceName === 'F' && z === 1) {
                 belongsToFace = true
                 row = 1 - y
@@ -387,131 +431,8 @@ function App() {
     }
   }
 
-  // 큐브 해법 생성
-  const handleGenerateSolution = async () => {
-    setIsGeneratingSolution(true)
-    
-    try {
-      // 현재 큐브 상태 저장 (깊은 복사)
-      const currentState = JSON.parse(JSON.stringify(cubeData))
-      setSavedCubeState(currentState)
-      console.log('📸 큐브 상태 저장됨:', currentState.length, '개 조각')
-      
-      // 현재 큐브 상태를 색상 레이블로 변환
-      const cubeColors = convertCubeDataToColors(cubeData)
-      
-      if (!cubeColors) {
-        alert('큐브 색상 데이터를 변환할 수 없습니다.')
-        return
-      }
-      
-      // 해법 생성 API 호출
-      const result = await generateSolution(cubeColors)
-      
-      if (result.success) {
-        setSolution(result.solution)
-        setShowSolution(true)
-      } else {
-        alert(result.message || '해법 생성에 실패했습니다.')
-      }
-    } catch (error) {
-      console.error('해법 생성 오류:', error)
-      alert('해법 생성 중 오류가 발생했습니다: ' + error.message)
-    } finally {
-      setIsGeneratingSolution(false)
-    }
-  }
-
-  // 큐브 데이터를 색상 레이블로 변환
-  const convertCubeDataToColors = (pieces) => {
-    if (!pieces || pieces.length === 0) {
-      return null
-    }
-    
-    // 색상 번호를 레이블로 변환
-    const colorToLabel = {
-      0xFFFFFF: 'w',  // white
-      0xFFD500: 'y',  // yellow
-      0xFF5800: 'o',  // orange
-      0xC41E3A: 'r',  // red
-      0x009E60: 'g',  // green
-      0x0051BA: 'b',  // blue
-    }
-    
-    // 면 인덱스 매핑
-    const faceIndexMap = ['R', 'L', 'U', 'D', 'F', 'B']
-    
-    // 각 면의 3x3 그리드 초기화
-    const faces = {
-      U: Array(3).fill(null).map(() => Array(3).fill('?')),
-      D: Array(3).fill(null).map(() => Array(3).fill('?')),
-      F: Array(3).fill(null).map(() => Array(3).fill('?')),
-      B: Array(3).fill(null).map(() => Array(3).fill('?')),
-      L: Array(3).fill(null).map(() => Array(3).fill('?')),
-      R: Array(3).fill(null).map(() => Array(3).fill('?'))
-    }
-    
-    // 각 조각의 색상을 면 그리드에 매핑
-    pieces.forEach(piece => {
-      const [x, y, z] = piece.position
-      const [rightColor, leftColor, topColor, bottomColor, frontColor, backColor] = piece.faceColors
-      
-      // 각 면에 속하는지 확인하고 색상 설정
-      if (x === 1) { // R면
-        const row = 1 - y
-        const col = 1 - z
-        faces.R[row][col] = colorToLabel[rightColor] || '?'
-      }
-      if (x === -1) { // L면
-        const row = 1 - y
-        const col = z + 1
-        faces.L[row][col] = colorToLabel[leftColor] || '?'
-      }
-      if (y === 1) { // U면
-        const row = 1 - z
-        const col = x + 1
-        faces.U[row][col] = colorToLabel[topColor] || '?'
-      }
-      if (y === -1) { // D면
-        const row = z + 1
-        const col = x + 1
-        faces.D[row][col] = colorToLabel[bottomColor] || '?'
-      }
-      if (z === 1) { // F면
-        const row = 1 - y
-        const col = x + 1
-        faces.F[row][col] = colorToLabel[frontColor] || '?'
-      }
-      if (z === -1) { // B면
-        const row = 1 - y
-        const col = 1 - x
-        faces.B[row][col] = colorToLabel[backColor] || '?'
-      }
-    })
-    
-    return faces
-  }
-
-  // 큐브 상태 복원 (해법 생성 시점으로)
-  const handleRestoreCube = () => {
-    if (!savedCubeState) {
-      console.warn('저장된 큐브 상태가 없습니다')
-      return
-    }
-    
-    if (!cubeRef.current || !cubeRef.current.setPieces) {
-      console.error('큐브 참조가 유효하지 않습니다')
-      return
-    }
-    
-    // 저장된 상태로 큐브 복원
-    cubeRef.current.setPieces(savedCubeState)
-    setCubeData(savedCubeState)
-    console.log('🔄 큐브가 해법 생성 시점으로 복원되었습니다:', savedCubeState.length, '개 조각')
-  }
-
-  // 루빅스 큐브 동작 표기법 파싱 및 실행
-  const handleApplyMove = (move) => {
+  // 루빅스 큐브 동작 표기법 파싱 및 실행 (임시 주석)
+  const handleApplyMove_disabled = (move) => {
     if (!cubeRef.current || !cubeRef.current.addRotation) {
       console.error('큐브 참조가 없습니다.')
       return
@@ -522,22 +443,26 @@ function App() {
     const face = move.charAt(0) // 면 (R, L, U, D, F, B)
     const modifier = move.substring(1) // 수식자 (없음, ', 2)
 
-    let direction = 1 // 기본: 시계방향
+    let direction = -1
     let rotations = 1 // 기본: 1회 회전
 
     if (modifier === "'") {
-      // 역방향 (반시계방향)
-      direction = -1
+      direction = 1
     } else if (modifier === "2") {
-      // 2번 회전 (180도)
       rotations = 2
     }
 
     console.log(`🔄 동작 실행: ${move} (면: ${face}, 방향: ${direction}, 회전수: ${rotations})`)
 
-    // 회전 실행
-    for (let i = 0; i < rotations; i++) {
-      cubeRef.current.addRotation(face, direction)
+    // 회전 실행 (해법 적용은 일반 속도 500ms 사용)
+    // 첫 번째 회전만 바로 실행하고, 나머지는 setTimeout으로 큐에 추가
+    cubeRef.current.addRotation(face, direction, 500)
+    
+    if (rotations === 2) {
+      // 180도 회전의 경우 두 번째 회전을 약간 지연시켜 큐에 추가되도록
+      setTimeout(() => {
+        cubeRef.current.addRotation(face, direction, 500)
+      }, 50)
     }
   }
 
@@ -602,16 +527,6 @@ function App() {
           title="이미지 업로드"
         >
           📷 이미지 업로드
-        </button>
-        
-        {/* 해법 생성 버튼 */}
-        <button 
-          className="solution-btn"
-          onClick={handleGenerateSolution}
-          disabled={isGeneratingSolution || cubeData.length === 0}
-          title="큐브 해법 생성"
-        >
-          {isGeneratingSolution ? '⏳ 생성 중...' : '🎯 해법 보기'}
         </button>
       </div>
       
@@ -738,19 +653,7 @@ function App() {
         </div>
       )}
 
-      {/* 해법 뷰어 사이드 패널 */}
-      <div className={`solution-panel ${showSolution ? 'open' : ''}`}>
-        {showSolution && (
-          <SolutionViewer 
-            solution={solution}
-            onClose={() => setShowSolution(false)}
-            onApplyMove={(move) => {
-              handleApplyMove(move)
-            }}
-            onRestoreCube={savedCubeState ? handleRestoreCube : null}
-          />
-        )}
-      </div>
+      {/* 해법 뷰어 사이드 패널 (삭제됨 - 추후 재구현 예정) */}
     </div>
   )
 }

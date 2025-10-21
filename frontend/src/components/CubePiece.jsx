@@ -34,8 +34,7 @@ function CubePiece({
   position, 
   faceColors, // 각 면의 현재 색상 배열
   onClick,
-  selectedCell,
-  isStatic = true
+  selectedCell
 }) {
   const meshRef = useRef()
   const cubeSize = 0.95
@@ -46,9 +45,13 @@ function CubePiece({
     selectedCell.y === position[1] && 
     selectedCell.z === position[2]
 
-  // 캐시된 머티리얼 사용
+  // 캐시된 머티리얼 사용 (검정색 면은 큐브 내부 색상으로)
   const materials = useMemo(() => {
-    return faceColors.map(color => getMaterial(color))
+    return faceColors.map(color => {
+      // 검정색(0x212121)은 보이지 않아야 하는 면이므로
+      // 큐브 플라스틱 내부 색상(어두운 회색)으로 표시
+      return color === 0x212121 ? getMaterial(0x2a2a2a) : getMaterial(color)
+    })
   }, [faceColors])
 
   const handlePointerDown = (event) => {
