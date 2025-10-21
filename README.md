@@ -29,3 +29,21 @@
     -   `NumPy`
 -   **Algorithm**:
     -   `Kociemba`
+
+## 실행방법
+- **프론트엔드**
+    ``` bash
+    - 루트폴더에서 
+    - npm install vite --save-dev
+    - 실행 후 
+    cd frontend
+    npm run dev
+    ```
+- **백엔드**
+    ``` python
+    - cd backend
+    - uvicorn main:app --reload
+    ```
+
+이걸로 실행하면 되고 안되면 카톡하셈
+그리고 devine.my:5173 서버도 열어두고 잘거니까 안열리면 이걸로 들어가면 됨
