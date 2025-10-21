@@ -23,6 +23,15 @@ import cv2
 import numpy as np
 from sklearn.cluster import KMeans
 from scipy.optimize import linear_sum_assignment
+import kociemba
+
+# 큐브 해법 모듈
+from cube_solver import (
+    solve_cube,
+    convert_to_frontend_format,
+    correct_face_rotations,
+    build_dynamic_color_map
+)
 
 try:
     from rembg import remove
@@ -52,13 +61,85 @@ app.mount("/images", StaticFiles(directory=UPLOAD_DIR), name="images")
 # 세션 관리
 SESSIONS = {}  # {session_id: {"created_at": datetime, "images": {...}}}
 
+@app.on_event("startup")
+async def startup_event():
+    """서버 시작 시 기존 세션 복원"""
+    print("\n🔄 서버 시작 - 기존 세션 복원 중...")
+    
+    if not UPLOAD_DIR.exists():
+        print("⚠️ 업로드 디렉토리가 없습니다.")
+        return
+    
+    # 모든 세션 디렉토리 스캔
+    session_dirs = [d for d in UPLOAD_DIR.iterdir() if d.is_dir()]
+    restored_count = 0
+    
+    for session_dir in session_dirs:
+        session_id = session_dir.name
+        try:
+            # UUID 형식인지 확인
+            uuid.UUID(session_id)
+            
+            # 세션 복원
+            if restore_session(session_id):
+                restored_count += 1
+        except (ValueError, AttributeError):
+            # UUID가 아닌 디렉토리는 건너뛰기
+            continue
+    
+    print(f"✅ {restored_count}개의 세션이 복원되었습니다.\n")
+
+def restore_session(session_id: str) -> bool:
+    """디스크에서 세션 복원"""
+    session_dir = UPLOAD_DIR / session_id
+    if not session_dir.exists():
+        return False
+    
+    try:
+        # 세션 데이터 복원
+        SESSIONS[session_id] = {
+            "created_at": datetime.fromtimestamp(session_dir.stat().st_ctime),
+            "images": {}
+        }
+        
+        # 이미지 메타데이터 복원
+        for json_file in session_dir.glob("*.json"):
+            # analyzed_colors.json, solution.json 등은 제외
+            if json_file.stem in ["analyzed_colors", "solution"]:
+                continue
+            
+            # 메타데이터 파일인지 확인 (파일명이 .jpg.json 형태)
+            if not json_file.stem.endswith(".jpg"):
+                continue
+            
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    metadata = json.load(f)
+                    if "face" in metadata:
+                        SESSIONS[session_id]["images"][metadata["face"]] = metadata
+            except Exception as e:
+                print(f"⚠️ 메타데이터 복원 실패 {json_file}: {e}")
+                continue
+        
+        print(f"✅ 세션 {session_id[:8]}... 복원 완료 ({len(SESSIONS[session_id]['images'])}개 이미지)")
+        return True
+        
+    except Exception as e:
+        print(f"❌ 세션 복원 실패 {session_id[:8]}...: {e}")
+        return False
+
 def get_session_id(request=None) -> str:
     """요청에서 세션 ID 가져오기 또는 새로 생성"""
     # 헤더에서 세션 ID 확인
     if request and hasattr(request, 'headers'):
         session_id = request.headers.get('X-Session-Id')
-        if session_id and session_id in SESSIONS:
-            return session_id
+        if session_id:
+            # 메모리에 세션이 없으면 복원 시도
+            if session_id not in SESSIONS:
+                if restore_session(session_id):
+                    return session_id
+            else:
+                return session_id
     
     # 새 세션 생성
     session_id = str(uuid.uuid4())
@@ -66,17 +147,27 @@ def get_session_id(request=None) -> str:
         "created_at": datetime.now(),
         "images": {}
     }
+    print(f"🆕 새 세션 생성: {session_id[:8]}...")
     return session_id
 
 def get_session_upload_dir(session_id: str) -> Path:
     """세션별 업로드 디렉토리 반환"""
     session_dir = UPLOAD_DIR / session_id
-    session_dir.mkdir(exist_ok=True)
+    session_dir.mkdir(parents=True, exist_ok=True)
     return session_dir
 
-def validate_session(session_id: str) -> bool:
-    """세션 ID 유효성 확인"""
-    return session_id in SESSIONS
+def validate_session(session_id: str, auto_restore: bool = True) -> bool:
+    """세션 ID 유효성 확인 (자동 복원 지원)"""
+    if session_id in SESSIONS:
+        return True
+    
+    # 자동 복원 시도
+    if auto_restore:
+        session_dir = UPLOAD_DIR / session_id
+        if session_dir.exists():
+            return restore_session(session_id)
+    
+    return False
 
 # 큐브 면 정보
 CUBE_FACES = ["U", "D", "F", "B", "L", "R"]
@@ -198,13 +289,9 @@ async def upload_image(
         if not session_id:
             raise HTTPException(status_code=400, detail="X-Session-Id 헤더가 필요합니다.")
         
-        # 세션 유효성 검사 - 없으면 새로 생성
+        # 세션 유효성 검사 (자동 복원 포함)
         if not validate_session(session_id):
-            print(f"세션 {session_id}가 존재하지 않습니다. 새로 생성합니다.")
-            SESSIONS[session_id] = {
-                "created_at": datetime.now(),
-                "images": {}
-            }
+            raise HTTPException(status_code=404, detail="유효하지 않은 세션입니다.")
         
         # 유효성 검사
         validate_cube_face(face)
@@ -294,16 +381,36 @@ async def get_cube_images(request: Request):
     """
     특정 세션의 업로드된 모든 큐브 이미지 정보 조회
     세션 ID는 X-Session-Id 헤더로 전달
+    세션 ID가 없거나 유효하지 않으면 빈 데이터 반환
     """
     try:
         # 헤더에서 세션 ID 가져오기
         session_id = request.headers.get('X-Session-Id')
-        if not session_id:
-            raise HTTPException(status_code=400, detail="X-Session-Id 헤더가 필요합니다.")
         
-        # 세션 유효성 검사
+        # 세션 ID가 없으면 빈 데이터 반환 (404 대신)
+        if not session_id:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "message": "세션 ID가 없습니다.",
+                    "session_id": None,
+                    "data": {}
+                }
+            )
+        
+        # 세션 유효성 검사 (자동 복원 시도)
         if not validate_session(session_id):
-            raise HTTPException(status_code=404, detail="유효하지 않은 세션입니다.")
+            # 유효하지 않은 세션이면 빈 데이터 반환
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "message": "유효하지 않은 세션입니다.",
+                    "session_id": session_id,
+                    "data": {}
+                }
+            )
         
         # 세션 데이터에서 직접 가져오기
         images_info = SESSIONS[session_id]["images"]
@@ -807,4 +914,128 @@ async def analyze_cube_images(request: Request):
         raise HTTPException(
             status_code=500,
             detail=f"이미지 분석 중 오류가 발생했습니다: {str(e)}"
+        )
+
+@app.post("/generate-solution")
+async def generate_solution(request: Request):
+    """
+    분석된 큐브 색상으로부터 해법 생성
+    
+    요청 본문에 cube_colors가 있으면 사용, 없으면 세션의 analyzed_colors.json 사용
+    """
+    try:
+        # 헤더에서 세션 ID 가져오기
+        session_id = request.headers.get('X-Session-Id')
+        if not session_id:
+            raise HTTPException(status_code=400, detail="X-Session-Id 헤더가 필요합니다.")
+        
+        # 세션 유효성 검사
+        if not validate_session(session_id):
+            raise HTTPException(status_code=404, detail="유효하지 않은 세션입니다.")
+        
+        session_dir = get_session_upload_dir(session_id)
+        
+        # 요청 본문에서 cube_colors 가져오기 시도
+        try:
+            body = await request.json()
+            cube_colors = body.get("cube_colors")
+            if cube_colors:
+                print(f"\n[세션 {session_id[:8]}...] 요청 본문에서 큐브 색상 사용 (3D 큐브 조작)")
+        except:
+            cube_colors = None
+        
+        # 요청 본문에 없으면 세션 파일에서 읽기
+        if not cube_colors:
+            result_path = session_dir / "analyzed_colors.json"
+            
+            # 분석 결과 파일 확인
+            if not result_path.exists():
+                raise HTTPException(
+                    status_code=404,
+                    detail="큐브 색상 분석 결과를 찾을 수 없습니다. 먼저 /analyze-cube-images를 호출하세요."
+                )
+            
+            # 분석 결과 읽기
+            if HAS_AIOFILES:
+                async with aiofiles.open(result_path, 'r', encoding='utf-8') as f:  # type: ignore
+                    content = await f.read()
+            else:
+                with open(result_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            
+            analysis_data = json.loads(content)
+            cube_colors = analysis_data["cube_colors"]
+            print(f"\n[세션 {session_id[:8]}...] 세션 파일에서 큐브 색상 사용 (이미지 분석)")
+        
+        print(f"\n[세션 {session_id[:8]}...] 큐브 해법 생성 시작")
+        print(f"원본 큐브 색상: {cube_colors}")
+        
+        # 해법 생성
+        solution_result = solve_cube(cube_colors)
+        
+        if not solution_result["success"]:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "success": False,
+                    "message": "큐브 해법 생성 실패",
+                    "error": solution_result.get("error"),
+                    "error_type": solution_result.get("error_type")
+                }
+            )
+        
+        # 프론트엔드 형식으로 변환
+        frontend_cube = convert_to_frontend_format(
+            solution_result["corrected_cube"],
+            solution_result["color_map"]
+        )
+        
+        # 결과 저장
+        solution_path = session_dir / "solution.json"
+        solution_data = {
+            "session_id": session_id,
+            "timestamp": datetime.now().isoformat(),
+            "kociemba_string": solution_result["kociemba_string"],
+            "solution": solution_result["solution"],
+            "move_count": solution_result["move_count"],
+            "moves": solution_result["moves"],
+            "color_map": solution_result["color_map"],
+            "frontend_cube": frontend_cube
+        }
+        
+        if HAS_AIOFILES:
+            async with aiofiles.open(solution_path, 'w', encoding='utf-8') as f:  # type: ignore
+                await f.write(json.dumps(solution_data, ensure_ascii=False, indent=2))
+        else:
+            with open(solution_path, 'w', encoding='utf-8') as f:
+                f.write(json.dumps(solution_data, ensure_ascii=False, indent=2))
+        
+        print(f"해법 생성 완료: {solution_result['solution']}")
+        print(f"이동 횟수: {solution_result['move_count']}")
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "message": f"큐브 해법이 생성되었습니다 ({solution_result['move_count']}회 이동)",
+                "session_id": session_id,
+                "data": {
+                    "solution": solution_result["solution"],
+                    "moves": solution_result["moves"],
+                    "move_count": solution_result["move_count"],
+                    "kociemba_string": solution_result["kociemba_string"],
+                    "color_map": solution_result["color_map"],
+                    "frontend_cube": frontend_cube
+                }
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"해법 생성 중 오류가 발생했습니다: {str(e)}"
         )
