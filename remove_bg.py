@@ -9,18 +9,18 @@ from sklearn.cluster import KMeans
 # ============= 기준 색상 정의 =============
 REFERENCE_COLORS_RGB = {
     'white':  np.array([220, 230, 240]),
-    'yellow': np.array([230, 225, 120]),
-    'orange': np.array([240, 130, 105]),
-    'red':    np.array([170, 55, 35]),
-    'green':  np.array([60, 190, 110]),
+    'yellow': np.array([180, 220, 130]),  # 기존 (230,225,120)에서 실제 클러스터(173,226,125)에 가깝게
+    'orange': np.array([200, 100, 80]),   # 더 어두운 주황도 포함 (밝은것~어두운것 중간)
+    'red':    np.array([145, 50, 45]),    # 매우 어두운 빨강에 맞춤
+    'green':  np.array([55, 180, 110]),   # 기존 (60,190,110)에서 약간 조정
     'blue':   np.array([20, 80, 150])
 }
 
 REFERENCE_COLORS_HSV = {
     'white':  np.array([100, 50, 230]),
     'yellow': np.array([73, 180, 180]),   # H 낮춤 (80→73), V 낮춤 (230→180)
-    'orange': np.array([15, 130, 230]),   # H 높임 (7→15), S 낮춤 (165→130)
-    'red':    np.array([2, 170, 148]),    # S 낮춤 (220→170), V 낮춤 (155→148)
+    'orange': np.array([10, 150, 200]),   # H 낮춤 (15→10), S 높임, V 낮춤 (어두운 주황)
+    'red':    np.array([2, 180, 140]),    # S 높임 (170→180), V 낮춤 (148→140)
     'green':  np.array([60, 180, 200]),   # H 낮춤 (65→60)
     'blue':   np.array([106, 215, 145])
 }
@@ -72,7 +72,7 @@ def match_clusters_to_colors(cluster_centers, reference_colors, distance_func):
 def apply_hue_based_rules(cluster_to_color, cluster_centers_hsv):
     """
     Hue + 채도 + 명도 기반 후처리 규칙
-    - orange vs red: 명도(V) + 채도(S)로 구분
+    - orange vs red: Hue 범위 더 넓게 (어두운 주황 포함)
     - yellow vs green: Hue 정밀 조정
     """
     for cluster_id in range(len(cluster_centers_hsv)):
@@ -85,22 +85,21 @@ def apply_hue_based_rules(cluster_to_color, cluster_centers_hsv):
         
         # 2. Hue + V + S로 색상 판별
         
-        # 빨강/주황 구분 (H=0-25)
-        if h < 25:
-            # 빨강 조건 (더 엄격하게)
-            if h <= 6:  # H가 매우 낮으면
-                if v < 170:  # 어두우면 빨강
-                    cluster_to_color[cluster_id] = 'red'
-                elif s > 150:  # 채도 높으면 빨강 가능성
-                    cluster_to_color[cluster_id] = 'red'
-                else:  # 밝고 채도 낮으면 주황
-                    cluster_to_color[cluster_id] = 'orange'
-            else:  # H > 6이면 주황
+        # 빨강/주황 구분 (H=0-30으로 확대)
+        if h < 30:
+            # 주황 범위 확대: H가 5 이상이면 주황으로 우선 고려
+            if h >= 5:
                 cluster_to_color[cluster_id] = 'orange'
+            # H가 매우 낮으면 (0-5) 명도/채도로 판단
+            else:
+                if v < 160 and s > 160:  # 어둡고 채도 높으면 빨강
+                    cluster_to_color[cluster_id] = 'red'
+                else:  # 나머지는 주황
+                    cluster_to_color[cluster_id] = 'orange'
         
         # 초록/노랑 구분 (H=50-100)
         elif 50 <= h < 100:
-            # 노랑: H=68-82 (약간 더 넓게)
+            # 노랑: H=68-82
             if 68 <= h <= 82 and s > 140:
                 cluster_to_color[cluster_id] = 'yellow'
             # 초록: 나머지
@@ -115,8 +114,8 @@ def apply_hue_based_rules(cluster_to_color, cluster_centers_hsv):
         elif h >= 170:
             cluster_to_color[cluster_id] = 'red'
         
-        # 기타 (H=25-50): 주황/노랑 경계
-        elif 25 <= h < 50:
+        # 기타 (H=30-50): 주황/노랑 경계
+        elif 30 <= h < 50:
             if v > 200 and s > 140:  # 밝고 채도 높으면 노랑
                 cluster_to_color[cluster_id] = 'yellow'
             else:  # 그 외 주황
@@ -124,27 +123,60 @@ def apply_hue_based_rules(cluster_to_color, cluster_centers_hsv):
     
     return cluster_to_color
 
-def ensemble_vote(rgb_color, hsv_color, rgb_dist, hsv_dist):
+def ensemble_vote(rgb_color, hsv_color, rgb_dist, hsv_dist, hsv_raw=None):
     """
     2중 투표: RGB와 HSV 결과를 종합
+    RGB를 훨씬 더 신뢰 (조명 변화에 강건)
+    
+    Args:
+        hsv_raw: 개별 칸의 실제 HSV 값 [H, S, V] (재검증용)
     
     Returns:
         (final_color, confidence, reason)
     """
+    # 0. 개별 HSV 재검증 (클러스터링 오류 보정)
+    if hsv_raw is not None:
+        h, s, v = hsv_raw
+        
+        # yellow 보정: H=38-60이고 채도 충분하면 무조건 yellow
+        if 38 <= h <= 60 and s > 120 and v > 150:
+            # RGB도 yellow면 확신
+            if rgb_color == 'yellow':
+                return 'yellow', 1.0, 'both_agree'
+            # RGB가 green이어도 HSV 재검증으로 yellow 확정
+            else:
+                return 'yellow', 0.95, 'hsv_recheck'
+        
+        # orange 보정: H=5-10°이고 밝으면 (V>160) 무조건 orange
+        if 5 <= h <= 10 and v > 160:
+            # RGB도 orange면 확신
+            if rgb_color == 'orange':
+                return 'orange', 1.0, 'both_agree'
+            # RGB가 red여도 HSV 재검증으로 orange 확정
+            else:
+                return 'orange', 0.95, 'hsv_recheck'
+        
+        # red 확정: H<5이고 어두우면 (V<160) 무조건 red
+        if h < 5 and v < 160 and s > 140:
+            if rgb_color == 'red':
+                return 'red', 1.0, 'both_agree'
+            else:
+                return 'red', 0.95, 'hsv_recheck'
+    
     # 1. 두 결과 일치 → 확신도 매우 높음
     if rgb_color == hsv_color:
         return rgb_color, 1.0, 'both_agree'
     
-    # 2. 불일치 → 거리 기반 신뢰도 계산
+    # 2. 불일치 → RGB를 훨씬 더 신뢰
     rgb_confidence = 1.0 / (1.0 + rgb_dist / 50.0)
     hsv_confidence = 1.0 / (1.0 + hsv_dist / 100.0)
     
-    # 3. RGB 가중치를 약간 더 줌 (조명 변화에 더 안정적)
-    rgb_weighted = rgb_confidence * 1.2
+    # 3. RGB 가중치 3배 (조명 변화에 훨씬 안정적)
+    rgb_weighted = rgb_confidence * 3.0
     hsv_weighted = hsv_confidence * 1.0
     
     if rgb_weighted > hsv_weighted:
-        final_confidence = rgb_confidence * 0.85
+        final_confidence = rgb_confidence * 0.90
         return rgb_color, final_confidence, 'rgb_wins'
     else:
         final_confidence = hsv_confidence * 0.85
@@ -474,6 +506,7 @@ def process_cube_dual_clustering(input_folder='cube_img',
     agree_count = 0
     rgb_win_count = 0
     hsv_win_count = 0
+    recheck_count = 0
     
     for img_data in all_images_data:
         filename = img_data['filename']
@@ -494,8 +527,11 @@ def process_cube_dual_clustering(input_folder='cube_img',
                 rgb_dist = rgb_distances[rgb_cluster]
                 hsv_dist = hsv_distances[hsv_cluster]
                 
+                # 개별 칸의 실제 HSV 값 전달 (재검증용)
+                hsv_raw = all_hsv_array[cell_idx]
+                
                 final_color, confidence, reason = ensemble_vote(
-                    rgb_color, hsv_color, rgb_dist, hsv_dist
+                    rgb_color, hsv_color, rgb_dist, hsv_dist, hsv_raw
                 )
                 
                 colors[row].append(final_color)
@@ -504,6 +540,8 @@ def process_cube_dual_clustering(input_folder='cube_img',
                 
                 if reason == 'both_agree':
                     agree_count += 1
+                elif reason == 'hsv_recheck':
+                    recheck_count += 1
                 elif reason == 'rgb_wins':
                     rgb_win_count += 1
                 else:
@@ -516,24 +554,45 @@ def process_cube_dual_clustering(input_folder='cube_img',
         vis_path = os.path.join(output_vis_folder, vis_filename)
         visualize_results(square_array, colors, confidences, reasons, vis_path)
         
-        # 출력
-        print(f"{filename}:")
+        # 출력 (각 칸의 RGB/HSV 값 포함)
+        print(f"\n{filename}:")
+        print("=" * 80)
+        
+        cell_idx_start = cell_idx - 9  # 이 이미지의 첫 칸 인덱스
+        
         for r in range(3):
-            row_str = "  "
             for c in range(3):
-                color = colors[r][c]
+                idx = cell_idx_start + r * 3 + c
+                
+                # RGB 값
+                rgb = all_rgb_array[idx]
+                rgb_cluster = rgb_labels[idx]
+                rgb_color = rgb_cluster_to_color[rgb_cluster]
+                
+                # HSV 값
+                hsv = all_hsv_array[idx]
+                hsv_cluster = hsv_labels[idx]
+                hsv_color = hsv_cluster_to_color[hsv_cluster]
+                
+                # 최종 결과
+                final_color = colors[r][c]
                 conf = confidences[r][c]
                 reason = reasons[r][c]
                 
                 if reason == 'both_agree':
                     symbol = '✓✓'
+                elif reason == 'hsv_recheck':
+                    symbol = '✓+'
                 elif conf >= 0.80:
                     symbol = '✓'
                 else:
                     symbol = '?'
                 
-                row_str += f"{color}({conf:.0%}){symbol} "
-            print(row_str)
+                print(f"[{r},{c}] RGB({rgb[0]:3.0f},{rgb[1]:3.0f},{rgb[2]:3.0f}) "
+                      f"→ C{rgb_cluster}={rgb_color:6s} | "
+                      f"HSV(H={hsv[0]:3.0f}°,S={hsv[1]:3.0f},V={hsv[2]:3.0f}) "
+                      f"→ C{hsv_cluster}={hsv_color:6s} | "
+                      f"최종: {final_color:6s}({conf:.0%}){symbol}")
         print()
         
         results.append({
@@ -548,6 +607,7 @@ def process_cube_dual_clustering(input_folder='cube_img',
     print("-" * 80)
     print(f"총 칸 수: {total_cells}")
     print(f"RGB-HSV 일치: {agree_count} ({agree_count/total_cells*100:.1f}%)")
+    print(f"HSV 재검증: {recheck_count} ({recheck_count/total_cells*100:.1f}%)")
     print(f"RGB 우세: {rgb_win_count} ({rgb_win_count/total_cells*100:.1f}%)")
     print(f"HSV 우세: {hsv_win_count} ({hsv_win_count/total_cells*100:.1f}%)")
     print("=" * 80)

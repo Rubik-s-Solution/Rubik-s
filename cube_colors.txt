@@ -1,60 +1,60 @@
 cube_01.jpg
-orange(67%) orange(100%) red(100%) 
-red(100%) orange(67%) red(100%) 
-blue(100%) orange(100%) yellow(78%) 
+yellow(75%) orange(100%) red(100%) 
+red(100%) yellow(75%) red(100%) 
+blue(100%) orange(100%) green(79%) 
 
 cube_02.jpg
-orange(67%) orange(100%) red(100%) 
-red(100%) orange(67%) red(100%) 
-blue(100%) orange(100%) yellow(78%) 
+yellow(75%) orange(100%) red(100%) 
+red(100%) yellow(75%) red(100%) 
+blue(100%) orange(100%) green(79%) 
 
 cube_03.jpg
 red(100%) orange(100%) white(100%) 
-yellow(78%) orange(100%) orange(67%) 
-yellow(78%) blue(100%) red(100%) 
+green(79%) orange(100%) yellow(100%) 
+yellow(95%) blue(100%) orange(95%) 
 
 cube_04.jpg
 red(100%) orange(100%) white(100%) 
-yellow(78%) orange(100%) orange(67%) 
-yellow(78%) blue(100%) red(100%) 
+green(79%) orange(100%) yellow(100%) 
+yellow(95%) blue(100%) orange(95%) 
 
 cube_05.jpg
-orange(100%) yellow(78%) blue(100%) 
+orange(100%) green(79%) blue(100%) 
 orange(100%) white(100%) blue(100%) 
-white(100%) white(100%) red(100%) 
+white(100%) white(100%) orange(95%) 
 
 cube_06.jpg
-orange(100%) yellow(78%) blue(100%) 
+orange(100%) green(79%) blue(100%) 
 orange(100%) white(100%) blue(100%) 
-white(100%) white(100%) red(100%) 
+white(100%) white(100%) orange(95%) 
 
 cube_07.jpg
-blue(100%) orange(67%) white(100%) 
-orange(67%) blue(100%) yellow(78%) 
-red(100%) white(100%) yellow(78%) 
+blue(100%) yellow(100%) white(100%) 
+yellow(100%) blue(100%) green(79%) 
+red(100%) white(100%) green(79%) 
 
 cube_08.jpg
-blue(100%) orange(67%) white(100%) 
-orange(67%) blue(100%) yellow(78%) 
-red(100%) white(100%) yellow(78%) 
+blue(100%) yellow(100%) white(100%) 
+yellow(100%) blue(100%) green(79%) 
+red(100%) white(100%) green(79%) 
 
 cube_09.jpg
 red(100%) red(100%) orange(100%) 
-white(100%) green(63%) white(100%) 
-blue(100%) yellow(78%) orange(67%) 
+white(100%) green(79%) white(100%) 
+blue(100%) green(79%) yellow(100%) 
 
 cube_10.jpg
 red(100%) red(100%) orange(100%) 
-white(100%) green(63%) white(100%) 
-blue(100%) yellow(78%) orange(67%) 
+white(100%) green(79%) white(100%) 
+blue(100%) green(79%) yellow(100%) 
 
 cube_11.jpg
-white(100%) orange(67%) yellow(78%) 
-blue(100%) red(54%) blue(100%) 
-yellow(78%) red(100%) orange(67%) 
+white(100%) yellow(75%) green(79%) 
+blue(100%) red(74%) blue(100%) 
+green(79%) red(100%) yellow(75%) 
 
 cube_12.jpg
-white(100%) orange(67%) yellow(78%) 
-blue(100%) red(54%) blue(100%) 
-yellow(78%) red(100%) orange(67%) 
+white(100%) yellow(75%) green(79%) 
+blue(100%) red(74%) blue(100%) 
+green(79%) red(100%) yellow(75%) 
 
