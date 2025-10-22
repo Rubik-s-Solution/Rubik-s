@@ -7,35 +7,76 @@ import glob
 from sklearn.cluster import KMeans
 from scipy.optimize import linear_sum_assignment
 
-# ============= 기준 RGB 값 정의 =============
-REFERENCE_COLORS = {
-    'white':  np.array([255, 255, 255]),  # 흰색
-    'yellow': np.array([255, 255, 0]),    # 노란색
-    'orange': np.array([255, 165, 0]),    # 주황색
-    'red':    np.array([180, 0, 0]),      # 빨간색
-    'green':  np.array([0, 155, 0]),      # 초록색
-    'blue':   np.array([0, 0, 255])       # 파란색
+# ============= 기준 HSV 값 정의 (개선: HSV 색공간 사용) =============
+REFERENCE_COLORS_HSV = {
+    'white':  np.array([0, 0, 95]),      # 흰색
+    'yellow': np.array([30, 90, 95]),    # 노란색
+    'orange': np.array([7, 75, 80]),     # 주황색 (실제 큐브에 맞게 조정)
+    'red':    np.array([0, 90, 60]),     # 빨간색 (더 어둡게)
+    'green':  np.array([75, 70, 60]),    # 초록색
+    'blue':   np.array([110, 85, 80])    # 파란색
 }
 
-def rgb_distance(rgb1, rgb2):
-    """두 RGB 값 사이의 유클리드 거리"""
-    return np.sqrt(np.sum((rgb1 - rgb2) ** 2))
+def rgb_to_hsv_custom(rgb):
+    """RGB를 HSV로 변환 (0-180, 0-100, 0-100 범위)"""
+    rgb_normalized = rgb / 255.0
+    r, g, b = rgb_normalized
+    
+    max_val = max(r, g, b)
+    min_val = min(r, g, b)
+    diff = max_val - min_val
+    
+    # Hue 계산
+    if diff == 0:
+        h = 0
+    elif max_val == r:
+        h = 60 * ((g - b) / diff % 6)
+    elif max_val == g:
+        h = 60 * ((b - r) / diff + 2)
+    else:
+        h = 60 * ((r - g) / diff + 4)
+    
+    # Saturation 계산
+    s = 0 if max_val == 0 else (diff / max_val) * 100
+    
+    # Value 계산
+    v = max_val * 100
+    
+    return np.array([h / 2, s, v])  # OpenCV 형식: H(0-180), S(0-100), V(0-100)
+
+def hsv_distance(hsv1, hsv2):
+    """
+    두 HSV 값 사이의 거리 (Hue는 원형 거리, S와 V는 유클리드)
+    """
+    h1, s1, v1 = hsv1
+    h2, s2, v2 = hsv2
+    
+    # Hue는 원형 (0과 180이 가까움)
+    dh = min(abs(h1 - h2), 180 - abs(h1 - h2))
+    ds = abs(s1 - s2)
+    dv = abs(v1 - v2)
+    
+    # 가중치 적용 (Hue가 가장 중요)
+    return np.sqrt((dh * 3) ** 2 + ds ** 2 + dv ** 2)
 
 def assign_clusters_to_colors(cluster_centers):
     """
-    클러스터 중심을 기준 색상에 1:1 매칭
+    클러스터 중심(RGB)을 HSV로 변환 후 기준 색상에 1:1 매칭
     헝가리안 알고리즘 사용 (중복 없는 최적 매칭)
     """
     n_clusters = len(cluster_centers)
-    color_names = list(REFERENCE_COLORS.keys())
+    color_names = list(REFERENCE_COLORS_HSV.keys())
+    
+    # RGB를 HSV로 변환
+    cluster_centers_hsv = np.array([rgb_to_hsv_custom(rgb) for rgb in cluster_centers])
     
     # 비용 행렬 생성 (거리 = 비용)
     cost_matrix = np.zeros((n_clusters, len(color_names)))
     
-    for i, cluster_center in enumerate(cluster_centers):
+    for i, cluster_hsv in enumerate(cluster_centers_hsv):
         for j, color_name in enumerate(color_names):
-            ref_rgb = REFERENCE_COLORS[color_name]
-            cost_matrix[i, j] = rgb_distance(cluster_center, ref_rgb)
+            ref_hsv = REFERENCE_COLORS_HSV[color_name]
+            cost_matrix[i, j] = hsv_distance(cluster_hsv, ref_hsv)
     
     # 헝가리안 알고리즘으로 최적 매칭
     row_ind, col_ind = linear_sum_assignment(cost_matrix)
@@ -45,7 +86,7 @@ def assign_clusters_to_colors(cluster_centers):
     for cluster_id, color_id in zip(row_ind, col_ind):
         cluster_to_color[cluster_id] = color_names[color_id]
     
-    return cluster_to_color
+    return cluster_to_color, cluster_centers_hsv
 
 def extract_rgb_from_cell(img_array, row, col, sample_ratio=0.4):
     """단일 셀에서 RGB 추출"""
@@ -166,12 +207,12 @@ def perspective_transform(image, pts):
     return warped
 
 # ============= 전체 파이프라인 =============
-def process_cube_with_reference_matching(input_folder='uploaded_images', 
+def process_cube_with_reference_matching(input_folder='cube_img', 
                                         output_square_folder='cube_square',
                                         output_vis_folder='cube_visualization',
                                         output_file='cube_colors.txt',
                                         size=800):
-    """기준 RGB 매칭 기반 루빅스 큐브 색상 인식"""
+    """HSV 색공간 기반 루빅스 큐브 색상 인식 (개선 버전)"""
     
     # 출력 폴더 생성
     for folder in [output_square_folder, output_vis_folder]:
@@ -189,14 +230,14 @@ def process_cube_with_reference_matching(input_folder='uploaded_images',
         return
     
     print(f"=" * 60)
-    print(f"기준 RGB 매칭 기반 루빅스 큐브 색상 인식")
+    print(f"HSV 색공간 기반 루빅스 큐브 색상 인식 (개선 버전)")
     print(f"총 {len(image_files)}개의 이미지를 처리합니다.")
     print(f"=" * 60)
     print()
     
-    print("기준 RGB 값:")
-    for color_name, rgb in REFERENCE_COLORS.items():
-        print(f"  {color_name:7s}: RGB{tuple(rgb)}")
+    print("기준 HSV 값:")
+    for color_name, hsv in REFERENCE_COLORS_HSV.items():
+        print(f"  {color_name:7s}: H={hsv[0]:3.0f}° S={hsv[1]:3.0f}% V={hsv[2]:3.0f}%")
     print()
     
     # Phase 1: 모든 이미지 처리 및 RGB 수집
@@ -285,38 +326,58 @@ def process_cube_with_reference_matching(input_folder='uploaded_images',
     
     # Phase 2: K-means 클러스터링
     print("=" * 60)
-    print("Phase 2: K-means 클러스터링 (54개 칸 → 6개 그룹)")
+    print("Phase 2: K-means 클러스터링 (HSV 공간에서!)")
     print("-" * 60)
     
     all_rgb_array = np.array(all_rgb_values)
-    print(f"총 {len(all_rgb_array)}개 칸의 RGB 데이터 수집 완료")
+    # RGB를 HSV로 변환
+    all_hsv_array = np.array([rgb_to_hsv_custom(rgb) for rgb in all_rgb_array])
+    print(f"총 {len(all_hsv_array)}개 칸의 HSV 데이터 수집 완료")
     
-    # K-means 실행 (k=6)
+    # K-means 실행 (k=6, HSV 공간에서!)
     kmeans = KMeans(n_clusters=6, random_state=42, n_init=10)
-    kmeans.fit(all_rgb_array)
+    kmeans.fit(all_hsv_array)
     
-    cluster_centers = kmeans.cluster_centers_
+    cluster_centers_hsv = kmeans.cluster_centers_
     all_labels = kmeans.labels_
     
     print(f"\nK-means 클러스터링 완료!")
-    print(f"\n클러스터 중심 RGB:")
-    for i, center in enumerate(cluster_centers):
-        print(f"  클러스터 {i}: RGB{tuple(center.astype(int))}")
+    print(f"\n클러스터 중심 HSV:")
+    for i, center_hsv in enumerate(cluster_centers_hsv):
+        print(f"  클러스터 {i}: HSV(H={center_hsv[0]:.0f}°, S={center_hsv[1]:.0f}%, V={center_hsv[2]:.0f}%)")
     
-    # Phase 3: 클러스터를 기준 색상에 매칭
+    # Phase 3: 클러스터를 기준 색상에 HSV 매칭
     print("\n" + "=" * 60)
-    print("Phase 3: 클러스터 → 기준 색상 1:1 매칭")
+    print("Phase 3: HSV 색공간에서 클러스터 → 색상 1:1 매칭")
     print("-" * 60)
     
-    cluster_to_color = assign_clusters_to_colors(cluster_centers)
+    # 클러스터 중심이 이미 HSV이므로 직접 매칭
+    n_clusters = len(cluster_centers_hsv)
+    color_names = list(REFERENCE_COLORS_HSV.keys())
+    
+    # 비용 행렬 생성
+    cost_matrix = np.zeros((n_clusters, len(color_names)))
+    
+    for i, cluster_hsv in enumerate(cluster_centers_hsv):
+        for j, color_name in enumerate(color_names):
+            ref_hsv = REFERENCE_COLORS_HSV[color_name]
+            cost_matrix[i, j] = hsv_distance(cluster_hsv, ref_hsv)
+    
+    # 헝가리안 알고리즘으로 최적 매칭
+    row_ind, col_ind = linear_sum_assignment(cost_matrix)
+    
+    cluster_to_color = {}
+    for cluster_id, color_id in zip(row_ind, col_ind):
+        cluster_to_color[cluster_id] = color_names[color_id]
     
     print("\n매칭 결과:")
     for cluster_id in sorted(cluster_to_color.keys()):
         color_name = cluster_to_color[cluster_id]
-        center_rgb = cluster_centers[cluster_id].astype(int)
-        ref_rgb = REFERENCE_COLORS[color_name].astype(int)
-        distance = rgb_distance(cluster_centers[cluster_id], REFERENCE_COLORS[color_name])
-        print(f"  클러스터 {cluster_id} RGB{tuple(center_rgb)} → {color_name:7s} (기준: RGB{tuple(ref_rgb)}, 거리: {distance:.1f})")
+        center_hsv = cluster_centers_hsv[cluster_id]
+        ref_hsv = REFERENCE_COLORS_HSV[color_name]
+        distance = hsv_distance(center_hsv, ref_hsv)
+        print(f"  클러스터 {cluster_id} HSV(H={center_hsv[0]:.0f}°, S={center_hsv[1]:.0f}%, V={center_hsv[2]:.0f}%)")
+        print(f"    → {color_name:7s} (기준: H={ref_hsv[0]:.0f}°, S={ref_hsv[1]:.0f}%, V={ref_hsv[2]:.0f}%, 거리: {distance:.1f})")
     
     # Phase 4: 결과 시각화 및 저장
     print("\n" + "=" * 60)
@@ -376,7 +437,7 @@ def process_cube_with_reference_matching(input_folder='uploaded_images',
 
 if __name__ == "__main__":
     process_cube_with_reference_matching(
-        input_folder='uploaded_images',
+        input_folder='cube_img',
         output_square_folder='cube_square',
         output_vis_folder='cube_visualization',
         output_file='cube_colors.txt',

@@ -1,60 +1,60 @@
 cube_01.jpg
-yellow white blue
-green green blue
-white red green
+orange green red
+blue green red
+white green yellow
 
 cube_02.jpg
-yellow white blue
-green green blue
-white red green
+orange green red
+blue green red
+white green yellow
 
 cube_03.jpg
-yellow orange blue
-yellow red white
-yellow orange green
+yellow green green
+blue yellow yellow
+white orange green
 
 cube_04.jpg
-yellow orange blue
-yellow red white
-yellow orange green
+yellow green green
+blue yellow yellow
+white orange green
 
 cube_05.jpg
-red yellow red
-blue blue green
-orange blue red
+orange red red
+green blue blue
+orange yellow red
 
 cube_06.jpg
-red yellow red
-blue blue green
-orange blue red
+orange red red
+green blue blue
+orange yellow red
 
 cube_07.jpg
-blue blue blue
-yellow yellow white
-orange orange white
+red orange white
+red red white
+blue white blue
 
 cube_08.jpg
-blue blue blue
-yellow yellow white
-orange orange white
+red orange white
+red red white
+blue white blue
 
 cube_09.jpg
-red yellow orange
-green white green
-green orange white
+yellow white orange
+yellow orange yellow
+yellow orange white
 
 cube_10.jpg
-red yellow orange
-green white green
-green orange white
+yellow white orange
+yellow orange yellow
+yellow orange white
 
 cube_11.jpg
-yellow white orange
-red orange red
-green red white
+blue red green
+blue white orange
+green white blue
 
 cube_12.jpg
-yellow white orange
-red orange red
-green red white
+blue red green
+blue white orange
+green white blue
 
