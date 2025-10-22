@@ -1,11 +1,11 @@
 cube_01.jpg
-orange green red
-blue green red
+orange green orange
+blue green orange
 white green yellow
 
 cube_02.jpg
-orange green red
-blue green red
+orange green orange
+blue green orange
 white green yellow
 
 cube_03.jpg
@@ -19,23 +19,23 @@ blue yellow yellow
 white orange green
 
 cube_05.jpg
-orange red red
+orange orange orange
 green blue blue
-orange yellow red
+orange yellow orange
 
 cube_06.jpg
-orange red red
+orange orange orange
 green blue blue
-orange yellow red
+orange yellow orange
 
 cube_07.jpg
-red orange white
-red red white
+orange orange white
+orange orange white
 blue white blue
 
 cube_08.jpg
-red orange white
-red red white
+orange orange white
+orange orange white
 blue white blue
 
 cube_09.jpg
@@ -49,12 +49,22 @@ yellow orange yellow
 yellow orange white
 
 cube_11.jpg
-blue red green
+blue orange green
 blue white orange
 green white blue
 
 cube_12.jpg
-blue red green
+blue orange green
 blue white orange
 green white blue
+
+cube_13.jpg
+orange white green
+red blue blue
+green green white
+
+cube_14.jpg
+orange white green
+red blue blue
+green green white
 

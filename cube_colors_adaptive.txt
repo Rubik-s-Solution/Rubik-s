@@ -1,0 +1,60 @@
+cube_back.jpg
+white white orange
+white green red
+white orange orange
+
+cube_back.jpg
+white white orange
+white green red
+white orange orange
+
+cube_bottom.jpg
+white white white
+blue yellow yellow
+orange red red
+
+cube_bottom.jpg
+white white white
+blue yellow yellow
+orange red red
+
+cube_front.jpg
+white white white
+red blue orange
+orange red red
+
+cube_front.jpg
+white white white
+red blue orange
+orange red red
+
+cube_left.jpg
+white white orange
+white red red
+white red orange
+
+cube_left.jpg
+white white orange
+white red red
+white red orange
+
+cube_right.jpg
+white white orange
+white red red
+white yellow red
+
+cube_right.jpg
+white white orange
+white red red
+white yellow red
+
+cube_top.jpg
+white white white
+blue blue yellow
+orange red orange
+
+cube_top.jpg
+white white white
+blue blue yellow
+orange red orange
+
