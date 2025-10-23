@@ -123,15 +123,21 @@ def cube_to_kociemba_string(cube_colors: Dict[str, List[List[str]]], color_map: 
     kociemba_string = ""
     
     print("  Kociemba 문자열 생성 과정:")
+    print(f"  DEBUG: cube_colors 타입 = {type(cube_colors)}")
+    print(f"  DEBUG: cube_colors 키 = {list(cube_colors.keys())}")
+    
     for face_char in kociemba_order:
         if face_char not in cube_colors:
             raise ValueError(f"면 {face_char}의 색상 데이터가 없습니다.")
         
         grid = cube_colors[face_char]
+        print(f"  DEBUG: {face_char}면 - 타입={type(grid)}, 길이={len(grid)}")
+        
         face_string = ""
         
         # 3x3 그리드를 순서대로 읽기
-        for row in grid:
+        for row_idx, row in enumerate(grid):
+            print(f"    DEBUG: {face_char}면 Row[{row_idx}] - 타입={type(row)}, 길이={len(row)}, 내용={row}")
             for color_char in row:
                 # 색상 문자를 면 문자로 변환
                 face_name = color_map.get(color_char)
@@ -139,7 +145,7 @@ def cube_to_kociemba_string(cube_colors: Dict[str, List[List[str]]], color_map: 
                     raise ValueError(f"알 수 없는 색상: {color_char}")
                 face_string += face_name
         
-        print(f"    {face_char} 면: {face_string} (중심={grid[1][1]} → {color_map[grid[1][1]]})")
+        print(f"    {face_char} 면: {face_string} (길이={len(face_string)}, 중심={grid[1][1]} → {color_map[grid[1][1]]})")
         kociemba_string += face_string
     
     return kociemba_string
@@ -184,6 +190,30 @@ def solve_cube(cube_colors: Dict[str, List[List[str]]]) -> Dict:
         # 2. 동적 color_map 생성
         print("2. 동적 color_map 생성...")
         color_map = build_dynamic_color_map(corrected_cube)
+        
+        # 2-1. 원본 색상 분포 확인 (color_map 적용 전)
+        print("2-1. 원본 색상 분포 확인...")
+        all_colors = []
+        for face in ['U', 'R', 'F', 'D', 'L', 'B']:
+            for row in corrected_cube[face]:
+                all_colors.extend(row)
+        
+        from collections import Counter
+        color_distribution = Counter(all_colors)
+        print(f"  색상별 개수: {dict(color_distribution)}")
+        
+        # 각 색상이 정확히 9개씩 있는지 확인
+        invalid_colors = []
+        for color_char, count in color_distribution.items():
+            if count != 9:
+                invalid_colors.append(f"{color_char}={count}")
+        
+        if invalid_colors:
+            error_msg = f"❌ 큐브 색상 분포 오류: {', '.join(invalid_colors)} (각 색상은 정확히 9개씩 있어야 함)"
+            print(f"  {error_msg}")
+            raise ValueError(error_msg)
+        
+        print(f"  ✅ 색상 분포 검증 통과: 모든 색상이 9개씩 있음")
         
         # 3. Kociemba 문자열 생성
         print("3. Kociemba 문자열 생성...")

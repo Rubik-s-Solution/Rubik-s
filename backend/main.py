@@ -510,47 +510,184 @@ async def health_check():
         "upload_dir_exists": UPLOAD_DIR.exists()
     }
 
-# ==================== K-means 클러스터링 기반 색상 분석 (remove_bg.py에서 가져옴) ====================
+# ==================== RGB + HSV 이중 클러스터링 기반 색상 분석 (remove_bg.py에서 가져옴) ====================
 
 # 기준 RGB 값 정의
-REFERENCE_COLORS = {
-    'white':  np.array([255, 255, 255]),  # 흰색
-    'yellow': np.array([255, 255, 0]),    # 노란색
-    'orange': np.array([255, 165, 0]),    # 주황색
-    'red':    np.array([180, 0, 0]),      # 빨간색
-    'green':  np.array([0, 155, 0]),      # 초록색
-    'blue':   np.array([0, 0, 255])       # 파란색
+REFERENCE_COLORS_RGB = {
+    'white':  np.array([220, 230, 240]),
+    'yellow': np.array([180, 220, 130]),
+    'orange': np.array([200, 100, 80]),
+    'red':    np.array([145, 50, 45]),
+    'green':  np.array([55, 180, 110]),
+    'blue':   np.array([20, 80, 150])
+}
+
+# 기준 HSV 값 정의 (OpenCV 형식: H=0-180, S=0-255, V=0-255)
+REFERENCE_COLORS_HSV = {
+    'white':  np.array([100, 50, 230]),
+    'yellow': np.array([73, 180, 180]),
+    'orange': np.array([10, 150, 200]),
+    'red':    np.array([2, 180, 140]),
+    'green':  np.array([60, 180, 200]),
+    'blue':   np.array([106, 215, 145])
 }
 
 def rgb_distance(rgb1, rgb2):
-    """두 RGB 값 사이의 유클리드 거리"""
+    """RGB 유클리드 거리"""
     return np.sqrt(np.sum((rgb1 - rgb2) ** 2))
 
-def assign_clusters_to_colors(cluster_centers):
+def hsv_distance(hsv1, hsv2):
+    """HSV 거리 (Hue는 원형)"""
+    h1, s1, v1 = hsv1
+    h2, s2, v2 = hsv2
+    
+    dh = min(abs(h1 - h2), 180 - abs(h1 - h2))
+    ds = abs(s1 - s2)
+    dv = abs(v1 - v2)
+    
+    return np.sqrt((dh * 2.0) ** 2 + (ds * 1.0) ** 2 + (dv * 0.8) ** 2)
+
+def match_clusters_to_colors(cluster_centers, reference_colors, distance_func):
     """
-    클러스터 중심을 기준 색상에 1:1 매칭
-    헝가리안 알고리즘 사용 (중복 없는 최적 매칭)
+    클러스터 중심을 기준 색상에 매칭 (단순 최근접)
+    각 클러스터를 가장 가까운 기준 색상에 바로 매칭
     """
     n_clusters = len(cluster_centers)
-    color_names = list(REFERENCE_COLORS.keys())
+    color_names = list(reference_colors.keys())
     
-    # 비용 행렬 생성 (거리 = 비용)
-    cost_matrix = np.zeros((n_clusters, len(color_names)))
-    
-    for i, cluster_center in enumerate(cluster_centers):
-        for j, color_name in enumerate(color_names):
-            ref_rgb = REFERENCE_COLORS[color_name]
-            cost_matrix[i, j] = rgb_distance(cluster_center, ref_rgb)
-    
-    # 헝가리안 알고리즘으로 최적 매칭
-    row_ind, col_ind = linear_sum_assignment(cost_matrix)
-    
-    # 매칭 결과
     cluster_to_color = {}
-    for cluster_id, color_id in zip(row_ind, col_ind):
-        cluster_to_color[cluster_id] = color_names[color_id]
+    cluster_distances = {}
+    
+    # 각 클러스터를 가장 가까운 기준 색상에 매칭
+    for cluster_id, cluster_center in enumerate(cluster_centers):
+        min_distance = float('inf')
+        best_color = None
+        
+        for color_name in color_names:
+            ref_color = reference_colors[color_name]
+            dist = distance_func(cluster_center, ref_color)
+            
+            if dist < min_distance:
+                min_distance = dist
+                best_color = color_name
+        
+        cluster_to_color[cluster_id] = best_color
+        cluster_distances[cluster_id] = min_distance
+    
+    return cluster_to_color, cluster_distances
+
+def apply_hue_based_rules(cluster_to_color, cluster_centers_hsv):
+    """
+    Hue + 채도 + 명도 기반 후처리 규칙
+    - orange vs red: Hue 범위 더 넓게 (어두운 주황 포함)
+    - yellow vs green: Hue 정밀 조정
+    """
+    for cluster_id in range(len(cluster_centers_hsv)):
+        h, s, v = cluster_centers_hsv[cluster_id]
+        
+        # 1. 흰색 판별 (채도 기반)
+        if s < 70:
+            cluster_to_color[cluster_id] = 'white'
+            continue
+        
+        # 2. Hue + V + S로 색상 판별
+        
+        # 빨강/주황 구분 (H=0-30으로 확대)
+        if h < 30:
+            # 주황 범위 확대: H가 5 이상이면 주황으로 우선 고려
+            if h >= 5:
+                cluster_to_color[cluster_id] = 'orange'
+            # H가 매우 낮으면 (0-5) 명도/채도로 판단
+            else:
+                if v < 160 and s > 160:  # 어둡고 채도 높으면 빨강
+                    cluster_to_color[cluster_id] = 'red'
+                else:  # 나머지는 주황
+                    cluster_to_color[cluster_id] = 'orange'
+        
+        # 초록/노랑 구분 (H=50-100)
+        elif 50 <= h < 100:
+            # 노랑: H=68-82
+            if 68 <= h <= 82 and s > 140:
+                cluster_to_color[cluster_id] = 'yellow'
+            # 초록: 나머지
+            else:
+                cluster_to_color[cluster_id] = 'green'
+        
+        # 파랑 (H=100-130)
+        elif 100 <= h < 130:
+            cluster_to_color[cluster_id] = 'blue'
+        
+        # 빨강 (H=170-180, 순수 빨강)
+        elif h >= 170:
+            cluster_to_color[cluster_id] = 'red'
+        
+        # 기타 (H=30-50): 주황/노랑 경계
+        elif 30 <= h < 50:
+            if v > 200 and s > 140:  # 밝고 채도 높으면 노랑
+                cluster_to_color[cluster_id] = 'yellow'
+            else:  # 그 외 주황
+                cluster_to_color[cluster_id] = 'orange'
     
     return cluster_to_color
+
+def ensemble_vote(rgb_color, hsv_color, rgb_dist, hsv_dist, hsv_raw=None):
+    """
+    2중 투표: RGB와 HSV 결과를 종합
+    RGB를 훨씬 더 신뢰 (조명 변화에 강건)
+    
+    Args:
+        hsv_raw: 개별 칸의 실제 HSV 값 [H, S, V] (재검증용)
+    
+    Returns:
+        (final_color, confidence, reason)
+    """
+    # 0. 개별 HSV 재검증 (클러스터링 오류 보정)
+    if hsv_raw is not None:
+        h, s, v = hsv_raw
+        
+        # yellow 보정: H=38-60이고 채도 충분하면 무조건 yellow
+        if 38 <= h <= 60 and s > 120 and v > 150:
+            # RGB도 yellow면 확신
+            if rgb_color == 'yellow':
+                return 'yellow', 1.0, 'both_agree'
+            # RGB가 green이어도 HSV 재검증으로 yellow 확정
+            else:
+                return 'yellow', 0.95, 'hsv_recheck'
+        
+        # orange 보정: H=5-10°이고 밝으면 (V>160) 무조건 orange
+        if 5 <= h <= 10 and v > 160:
+            # RGB도 orange면 확신
+            if rgb_color == 'orange':
+                return 'orange', 1.0, 'both_agree'
+            # RGB가 red여도 HSV 재검증으로 orange 확정
+            else:
+                return 'orange', 0.95, 'hsv_recheck'
+        
+        # red 확정: H<5이고 어두우면 (V<160) 무조건 red
+        if h < 5 and v < 160 and s > 140:
+            if rgb_color == 'red':
+                return 'red', 1.0, 'both_agree'
+            else:
+                return 'red', 0.95, 'hsv_recheck'
+    
+    # 1. 두 결과 일치 → 확신도 매우 높음
+    if rgb_color == hsv_color:
+        return rgb_color, 1.0, 'both_agree'
+    
+    # 2. 불일치 → RGB를 훨씬 더 신뢰
+    rgb_confidence = 1.0 / (1.0 + rgb_dist / 50.0)
+    hsv_confidence = 1.0 / (1.0 + hsv_dist / 100.0)
+    
+    # 3. RGB 가중치 3배 (조명 변화에 훨씬 안정적)
+    rgb_weighted = rgb_confidence * 3.0
+    hsv_weighted = hsv_confidence * 1.0
+    
+    if rgb_weighted > hsv_weighted:
+        final_confidence = rgb_confidence * 0.90
+        return rgb_color, final_confidence, 'rgb_wins'
+    else:
+        final_confidence = hsv_confidence * 0.85
+        return hsv_color, final_confidence, 'hsv_wins'
 
 def extract_rgb_from_cell(img_array, row, col, sample_ratio=0.4):
     """단일 셀에서 RGB 추출"""
@@ -569,7 +706,7 @@ def extract_rgb_from_cell(img_array, row, col, sample_ratio=0.4):
     sample_region = img_array[start_y:start_y+sample_height, start_x:start_x+sample_width]
     avg_color = np.mean(sample_region, axis=(0, 1))[:3]
     
-    return avg_color
+    return avg_color, (start_x, start_y, sample_width, sample_height)
 
 def order_points(pts):
     """Perspective 변환을 위한 4점 정렬"""
@@ -735,7 +872,7 @@ COLOR_MAP = {
 @app.post("/analyze-cube-images")
 async def analyze_cube_images(request: Request):
     """
-    특정 세션의 업로드된 모든 큐브 이미지를 K-means 클러스터링으로 분석하여 색상 데이터 추출
+    특정 세션의 업로드된 모든 큐브 이미지를 RGB + HSV 이중 클러스터링으로 분석하여 색상 데이터 추출
     전체 큐브(54개 칸)를 한번에 분석하여 일관성 있는 색상 인식
     세션 ID는 X-Session-Id 헤더로 전달
     """
@@ -767,7 +904,7 @@ async def analyze_cube_images(request: Request):
         all_rgb_values = []
         all_images_data = []
         
-        print(f"\n[세션 {session_id[:8]}...] Phase 1: {len(images_info)}개 이미지 전처리 시작")
+        print(f"\n[세션 {session_id[:8]}...] Phase 1: {len(images_info)}개 이미지 전처리 및 RGB 수집")
         
         for face, metadata in sorted(images_info.items()):
             image_path = session_dir / metadata["saved_filename"]
@@ -777,17 +914,14 @@ async def analyze_cube_images(request: Request):
                 square_array = preprocess_cube_image(image_path)
                 
                 # 각 칸에서 RGB 추출
-                rgb_grid = []
                 for row in range(3):
                     for col in range(3):
-                        rgb = extract_rgb_from_cell(square_array, row, col)
-                        rgb_grid.append(rgb)
+                        rgb, _ = extract_rgb_from_cell(square_array, row, col)
                         all_rgb_values.append(rgb)
                 
                 all_images_data.append({
                     'face': face,
-                    'array': square_array,
-                    'rgb_grid': rgb_grid
+                    'array': square_array
                 })
                 
                 print(f"  {face} 면: RGB 수집 완료 (9개 칸)")
@@ -806,49 +940,126 @@ async def analyze_cube_images(request: Request):
                 }
             )
         
-        # Phase 2: K-means 클러스터링 (54개 칸 → 6개 그룹)
-        print(f"\nPhase 2: K-means 클러스터링 ({len(all_rgb_values)}개 칸 → 6개 그룹)")
-        
         all_rgb_array = np.array(all_rgb_values)
-        kmeans = KMeans(n_clusters=6, random_state=42, n_init=10)
-        kmeans.fit(all_rgb_array)
+        total_cells = len(all_rgb_array)
         
-        cluster_centers = kmeans.cluster_centers_
-        all_labels = kmeans.labels_
+        print(f"\n총 {total_cells}개 칸의 RGB 데이터 수집 완료")
         
-        print("K-means 클러스터링 완료!")
-        for i, center in enumerate(cluster_centers):
-            print(f"  클러스터 {i}: RGB{tuple(center.astype(int))}")
+        # Phase 2-A: RGB 클러스터링
+        print(f"\nPhase 2-A: RGB 클러스터링 (6개 그룹)")
         
-        # Phase 3: 클러스터를 기준 색상에 매칭 (헝가리안 알고리즘)
-        print("\nPhase 3: 클러스터 → 기준 색상 1:1 매칭")
+        kmeans_rgb = KMeans(n_clusters=6, random_state=42, n_init=10)
+        kmeans_rgb.fit(all_rgb_array)
         
-        cluster_to_color = assign_clusters_to_colors(cluster_centers)
+        rgb_cluster_centers = kmeans_rgb.cluster_centers_
+        rgb_labels = kmeans_rgb.labels_
         
-        print("매칭 결과:")
-        for cluster_id in sorted(cluster_to_color.keys()):
-            color_name = cluster_to_color[cluster_id]
-            center_rgb = cluster_centers[cluster_id].astype(int)
-            ref_rgb = REFERENCE_COLORS[color_name].astype(int)
-            distance = rgb_distance(cluster_centers[cluster_id], REFERENCE_COLORS[color_name])
-            print(f"  클러스터 {cluster_id} RGB{tuple(center_rgb)} → {color_name:7s} (거리: {distance:.1f})")
+        print("RGB 클러스터 중심:")
+        for i, center in enumerate(rgb_cluster_centers):
+            count = np.sum(rgb_labels == i)
+            print(f"  클러스터 {i}: RGB({center[0]:.0f}, {center[1]:.0f}, {center[2]:.0f}) - {count}개 칸")
         
-        # Phase 4: 각 면의 색상 결과 생성
-        print("\nPhase 4: 결과 생성")
+        # RGB 클러스터를 색상에 매칭
+        rgb_cluster_to_color, rgb_distances = match_clusters_to_colors(
+            rgb_cluster_centers, REFERENCE_COLORS_RGB, rgb_distance
+        )
+        
+        print("\nRGB 매칭:")
+        for i in sorted(rgb_cluster_to_color.keys()):
+            print(f"  클러스터 {i} → {rgb_cluster_to_color[i]:7s} (거리: {rgb_distances[i]:.1f})")
+        
+        # Phase 2-B: HSV 클러스터링
+        print(f"\nPhase 2-B: HSV 클러스터링 (6개 그룹)")
+        
+        # RGB를 HSV로 변환
+        all_hsv_array = []
+        for rgb in all_rgb_array:
+            rgb_pixel = np.uint8([[rgb]])
+            hsv_pixel = cv2.cvtColor(rgb_pixel, cv2.COLOR_RGB2HSV)
+            all_hsv_array.append(hsv_pixel[0][0])
+        all_hsv_array = np.array(all_hsv_array)
+        
+        kmeans_hsv = KMeans(n_clusters=6, random_state=42, n_init=10)
+        kmeans_hsv.fit(all_hsv_array)
+        
+        hsv_cluster_centers = kmeans_hsv.cluster_centers_
+        hsv_labels = kmeans_hsv.labels_
+        
+        print("HSV 클러스터 중심:")
+        for i, center in enumerate(hsv_cluster_centers):
+            count = np.sum(hsv_labels == i)
+            print(f"  클러스터 {i}: HSV(H={center[0]:3.0f}°, S={center[1]:3.0f}, V={center[2]:3.0f}) - {count}개 칸")
+        
+        # HSV 클러스터를 색상에 매칭
+        hsv_cluster_to_color, hsv_distances = match_clusters_to_colors(
+            hsv_cluster_centers, REFERENCE_COLORS_HSV, hsv_distance
+        )
+        
+        print("\nHSV 매칭 (후처리 전):")
+        for i in sorted(hsv_cluster_to_color.keys()):
+            h, s, v = hsv_cluster_centers[i]
+            print(f"  클러스터 {i}: H={h:3.0f}° S={s:3.0f} V={v:3.0f} → {hsv_cluster_to_color[i]:7s}")
+        
+        # Hue 기반 후처리
+        hsv_cluster_to_color = apply_hue_based_rules(hsv_cluster_to_color, hsv_cluster_centers)
+        
+        print("\nHSV 최종 매칭 (후처리 후):")
+        for i in sorted(hsv_cluster_to_color.keys()):
+            print(f"  클러스터 {i} → {hsv_cluster_to_color[i]:7s}")
+        
+        # Phase 3: 앙상블 투표
+        print(f"\nPhase 3: 앙상블 투표 (RGB + HSV 종합)")
         
         cube_colors = {}
         analysis_results = {}
-        label_idx = 0
+        cell_idx = 0
+        
+        agree_count = 0
+        rgb_win_count = 0
+        hsv_win_count = 0
+        recheck_count = 0
         
         for img_data in all_images_data:
             face = img_data['face']
             
-            # 이 면의 9개 칸에 대한 클러스터 레이블
-            image_labels = all_labels[label_idx:label_idx+9]
-            label_idx += 9
+            colors_full = []
+            confidences = []
+            reasons = []
             
-            # 색상 이름으로 변환 (full name → 단일 문자)
-            colors_full = [cluster_to_color[label] for label in image_labels]
+            for row in range(3):
+                for col in range(3):
+                    rgb_cluster = rgb_labels[cell_idx]
+                    hsv_cluster = hsv_labels[cell_idx]
+                    
+                    rgb_color = rgb_cluster_to_color[rgb_cluster]
+                    hsv_color = hsv_cluster_to_color[hsv_cluster]
+                    
+                    rgb_dist = rgb_distances[rgb_cluster]
+                    hsv_dist = hsv_distances[hsv_cluster]
+                    
+                    # 개별 칸의 실제 HSV 값 전달 (재검증용)
+                    hsv_raw = all_hsv_array[cell_idx]
+                    
+                    final_color, confidence, reason = ensemble_vote(
+                        rgb_color, hsv_color, rgb_dist, hsv_dist, hsv_raw
+                    )
+                    
+                    colors_full.append(final_color)
+                    confidences.append(confidence)
+                    reasons.append(reason)
+                    
+                    if reason == 'both_agree':
+                        agree_count += 1
+                    elif reason == 'hsv_recheck':
+                        recheck_count += 1
+                    elif reason == 'rgb_wins':
+                        rgb_win_count += 1
+                    else:
+                        hsv_win_count += 1
+                    
+                    cell_idx += 1
+            
+            # 색상 이름을 단일 문자로 변환
             colors = [COLOR_LABEL_MAP[c] for c in colors_full]
             
             # 3x3 그리드로 변환
@@ -861,22 +1072,41 @@ async def analyze_cube_images(request: Request):
             analysis_results[face] = {
                 "colors": color_grid,
                 "hex_colors": hex_grid,
-                "cluster_labels": image_labels.tolist(),
+                "confidences": confidences,
+                "reasons": reasons,
                 "status": "success"
             }
             
             print(f"\n{face} 면:")
-            for row in color_grid:
-                print(f"  {' '.join(row)}")
+            for r_idx, row in enumerate(color_grid):
+                conf_str = " ".join([f"{confidences[r_idx*3+c]:.0%}" for c in range(3)])
+                print(f"  {' '.join(row)}  ({conf_str})")
+        
+        # 통계 출력
+        print(f"\n앙상블 통계:")
+        print(f"총 칸 수: {total_cells}")
+        print(f"RGB-HSV 일치: {agree_count} ({agree_count/total_cells*100:.1f}%)")
+        print(f"HSV 재검증: {recheck_count} ({recheck_count/total_cells*100:.1f}%)")
+        print(f"RGB 우세: {rgb_win_count} ({rgb_win_count/total_cells*100:.1f}%)")
+        print(f"HSV 우세: {hsv_win_count} ({hsv_win_count/total_cells*100:.1f}%)")
         
         # 분석 결과 저장 (세션별 디렉토리에)
         result_path = session_dir / "analyzed_colors.json"
         result_data = {
             "session_id": session_id,
             "timestamp": datetime.now().isoformat(),
-            "method": "kmeans_clustering",
-            "cluster_centers": cluster_centers.tolist(),
-            "cluster_mapping": {str(k): v for k, v in cluster_to_color.items()},
+            "method": "rgb_hsv_dual_clustering_ensemble",
+            "rgb_cluster_centers": rgb_cluster_centers.tolist(),
+            "hsv_cluster_centers": hsv_cluster_centers.tolist(),
+            "rgb_cluster_mapping": {str(k): v for k, v in rgb_cluster_to_color.items()},
+            "hsv_cluster_mapping": {str(k): v for k, v in hsv_cluster_to_color.items()},
+            "ensemble_stats": {
+                "total_cells": total_cells,
+                "agree_count": agree_count,
+                "recheck_count": recheck_count,
+                "rgb_win_count": rgb_win_count,
+                "hsv_win_count": hsv_win_count
+            },
             "cube_colors": cube_colors,
             "analysis_results": analysis_results
         }
@@ -892,14 +1122,17 @@ async def analyze_cube_images(request: Request):
             status_code=200,
             content={
                 "success": True,
-                "message": f"{len(cube_colors)}개 면의 색상 분석이 완료되었습니다 (K-means 클러스터링)",
+                "message": f"{len(cube_colors)}개 면의 색상 분석이 완료되었습니다 (RGB + HSV 이중 클러스터링 앙상블)",
                 "session_id": session_id,
                 "data": {
                     "cube_colors": cube_colors,
                     "analysis_results": analysis_results,
-                    "cluster_info": {
-                        "centers": cluster_centers.tolist(),
-                        "mapping": {str(k): v for k, v in cluster_to_color.items()}
+                    "ensemble_stats": {
+                        "total_cells": total_cells,
+                        "agree_count": agree_count,
+                        "recheck_count": recheck_count,
+                        "rgb_win_count": rgb_win_count,
+                        "hsv_win_count": hsv_win_count
                     },
                     "result_file": str(result_path)
                 }

@@ -386,6 +386,21 @@ export const convertCubePiecesToJson = (pieces) => {
   console.log(`  L 중심: ${cubeData.L[1][1]} (예상: o)`)
   console.log(`  B 중심: ${cubeData.B[1][1]} (예상: b)`)
   
+  // 각 면의 배열 구조 확인
+  console.log('🔍 각 면의 배열 구조 상세 확인:')
+  const faces = ['U', 'R', 'F', 'D', 'L', 'B']
+  faces.forEach(face => {
+    console.log(`  ${face}면:`)
+    console.log(`    - 타입: ${Array.isArray(cubeData[face]) ? 'Array' : typeof cubeData[face]}`)
+    console.log(`    - 행 개수: ${cubeData[face].length}`)
+    cubeData[face].forEach((row, rowIdx) => {
+      console.log(`    - Row[${rowIdx}]: 타입=${Array.isArray(row) ? 'Array' : typeof row}, 길이=${row.length}, 내용=[${row.join(', ')}]`)
+    })
+    // 전체를 평면화했을 때 개수
+    const flatCount = cubeData[face].flat().length
+    console.log(`    - 평면화 시 총 셀 개수: ${flatCount}`)
+  })
+  
   return cubeData
 }
 

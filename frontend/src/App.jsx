@@ -8,7 +8,8 @@ import ViewModeSelector from './components/ViewModeSelector'
 import Resizer from './components/Resizer'
 import ColorPicker, { COLORS } from './components/ColorPicker'
 import ImageUpload from './components/ImageUpload'
-import SolutionViewer from './components/SolutionViewer'
+import SolutionOverlay from './components/SolutionOverlay'
+import RotationGuide from './components/RotationGuide'
 import { loadAndConvertCubeData } from './utils/cubeColorLoader'
 import { generateSolution, createSession, clearSessionId } from './utils/imageApi'
 import { parseMove } from './utils/cubeSolver'
@@ -29,6 +30,9 @@ function App() {
   const [solution, setSolution] = useState(null) // 생성된 해법
   const [showSolution, setShowSolution] = useState(false) // 해법 뷰어 표시
   const [isGeneratingSolution, setIsGeneratingSolution] = useState(false) // 해법 생성 중
+  const [solutionStep, setSolutionStep] = useState(0) // 현재 해법 단계
+  const [showRotationGuide, setShowRotationGuide] = useState(false) // 회전 가이드 표시
+  const [isProcessingMove, setIsProcessingMove] = useState(false) // 이동 처리 중
   const [solutionError, setSolutionError] = useState(null) // 해법 생성 오류
   const [initialCubeState, setInitialCubeState] = useState(null) // 해법 생성 시점의 큐브 상태
   const cubeRef = useRef()
@@ -492,6 +496,8 @@ function App() {
       if (result.success && result.data) {
         setSolution(result.data)
         setShowSolution(true)
+        setSolutionStep(0) // 단계 초기화
+        setShowRotationGuide(true) // 첫 단계 가이드 표시
         console.log('✅ 해법 생성 완료:', result.data)
       } else {
         throw new Error(result.error || '해법 생성 실패')
@@ -594,8 +600,62 @@ function App() {
         faceColors: [...piece.faceColors]
       }))
       cubeRef.current.setPieces(restoredPieces)
+      setSolutionStep(0)
+      setShowRotationGuide(false)
       console.log('🔄 큐브가 섞인 초기 상태로 복원되었습니다.')
     }
+  }
+
+  // 해법 네비게이션: 다음 단계
+  const handleNextSolutionStep = () => {
+    if (!solution || solutionStep >= solution.moves.length || isProcessingMove) {
+      return
+    }
+
+    setIsProcessingMove(true)
+    setShowRotationGuide(false) // 가이드 숨기기
+
+    const move = solution.moves[solutionStep]
+    const { face, rotation } = parseMove(move)
+
+    // 회전 실행
+    handleApplyMove(face, rotation)
+
+    // 단계 업데이트 (회전 시간 + 여유)
+    const rotationTime = Math.abs(rotation) === 2 ? 1000 : 500
+    setTimeout(() => {
+      setSolutionStep(prev => prev + 1)
+      setIsProcessingMove(false)
+      // 다음 단계가 있으면 가이드 표시
+      if (solutionStep + 1 < solution.moves.length) {
+        setShowRotationGuide(true)
+      }
+    }, rotationTime + 100)
+  }
+
+  // 해법 네비게이션: 이전 단계
+  const handlePrevSolutionStep = () => {
+    if (!solution || solutionStep <= 0 || isProcessingMove) {
+      return
+    }
+
+    setIsProcessingMove(true)
+    setShowRotationGuide(false) // 가이드 숨기기
+
+    const move = solution.moves[solutionStep - 1]
+    const { face, rotation } = parseMove(move)
+
+    // 역방향 회전 실행
+    const reverseRotation = rotation === 2 ? 2 : -rotation
+    handleApplyMove(face, reverseRotation)
+
+    // 단계 업데이트
+    const rotationTime = Math.abs(rotation) === 2 ? 1000 : 500
+    setTimeout(() => {
+      setSolutionStep(prev => prev - 1)
+      setIsProcessingMove(false)
+      setShowRotationGuide(true) // 가이드 다시 표시
+    }, rotationTime + 100)
   }
 
   // 루빅스 큐브 동작 표기법 파싱 및 실행 (임시 주석)
@@ -734,6 +794,14 @@ function App() {
               onCellSelect={handleCellSelect}
             />
             
+            {/* 회전 가이드 화살표 */}
+            {showRotationGuide && solution && solutionStep < solution.moves.length && (
+              <RotationGuide 
+                move={solution.moves[solutionStep]} 
+                visible={true}
+              />
+            )}
+            
             <OrbitControls 
               target={[0, 0, 0]}
               enablePan={true}
@@ -755,6 +823,21 @@ function App() {
               }}
             />
           </Canvas>
+          
+          {/* 3D 큐브 솔루션 오버레이 (해법이 있을 때만 표시) */}
+          {solution && showSolution && (
+            <SolutionOverlay
+              currentStep={solutionStep}
+              totalSteps={solution.moves.length}
+              currentMove={solutionStep > 0 ? solution.moves[solutionStep - 1] : null}
+              moves={solution.moves}
+              onNext={handleNextSolutionStep}
+              onPrev={handlePrevSolutionStep}
+              onReset={handleResetToScrambled}
+              onClose={() => setShowSolution(false)}
+              disabled={isProcessingMove}
+            />
+          )}
         </div>
         
         {viewMode === 'BOTH' && (
@@ -797,25 +880,6 @@ function App() {
               onAnalysisComplete={handleAnalysisComplete}
             />
           </div>
-        </div>
-      )}
-
-      {/* 해법 뷰어 사이드 패널 */}
-      {showSolution && solution && (
-        <div className="solution-panel">
-          <button 
-            className="solution-close"
-            onClick={() => setShowSolution(false)}
-            title="닫기"
-          >
-            ✕
-          </button>
-          <SolutionViewer
-            solution={solution.solution}
-            moves={solution.moves}
-            onApplyMove={handleApplyMove}
-            onReset={handleResetToScrambled}
-          />
         </div>
       )}
     </div>

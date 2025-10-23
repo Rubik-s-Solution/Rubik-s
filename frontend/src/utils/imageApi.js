@@ -318,13 +318,20 @@ export const generateSolution = async (cubeColors = null) => {
       'Content-Type': 'application/json'
     }
 
-    const body = cubeColors ? JSON.stringify({ cube_colors: cubeColors }) : null
-
-    const response = await fetch(`${API_BASE_URL}/generate-solution`, {
+    // cubeColors가 있으면 요청 본문에 포함
+    let requestOptions = {
       method: 'POST',
-      headers: headers,
-      body: body
-    })
+      headers: headers
+    }
+
+    if (cubeColors) {
+      console.log('📤 현재 3D 큐브 상태를 백엔드로 전송합니다 (색상 수정 반영):', cubeColors)
+      requestOptions.body = JSON.stringify({ cube_colors: cubeColors })
+    } else {
+      console.log('📂 백엔드의 이미지 분석 결과를 사용합니다')
+    }
+
+    const response = await fetch(`${API_BASE_URL}/generate-solution`, requestOptions)
 
     const result = await response.json()
     
